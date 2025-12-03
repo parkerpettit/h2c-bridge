@@ -1,82 +1,112 @@
 # H2C Bridge
 
-A modular implementation of the H2C Bridge architecture. It transfers knowledge from a large "sharer" model (e.g., Llama-3) to a smaller "receiver" model (e.g., Qwen-0.5B) by projecting hidden states into the receiver's KV cache.
+Transfer knowledge from a large LLM (sharer) to a small LLM (receiver) by injecting modified key-value cache representations.
 
-## Quick Start
+## Setup
 
-### 1. Install
+### Prerequisites
+
+- Python 3.8+
+- CUDA-capable GPU
+- WandB account
+
+### Installation
 
 ```bash
-git clone https://github.com/yourusername/h2c-bridge.git
+# Clone repository
+git clone https://github.com/parkerpettit/h2c-bridge.git
 cd h2c-bridge
+
+# Install package
 pip install -e .
 ```
 
-### 2. Train
+
+## Quick Start
 
 ```python
-from h2c_bridge.simple_entry import setup_h2c_bridge
-from h2c_bridge.training.engine import H2CEngine
+from h2c_bridge import H2CModelFactory
+from h2c_bridge.config import get_default_config
+from h2c_bridge.data import H2CDataModule
+from h2c_bridge.training import H2CEngine
 
-# One-line setup with defaults
-factory, dm, config = setup_h2c_bridge()
+# Setup
+config = get_default_config()
+factory = H2CModelFactory(config["SHARER_ID"], config["RECEIVER_ID"])
+tok_s, tok_r = factory.load_tokenizers()
 
 # Train
+dm = H2CDataModule(tok_s, tok_r, config)
 engine = H2CEngine(factory, dm, config)
 engine.run(epochs=1)
 ```
 
+Checkpoints automatically upload to WandB as versioned artifacts.
+
 ## Development Workflow
 
-### Local Iteration (IDE + Colab)
+### Local Iteration
 
-If you're using the Colab extension in VS Code:
+Edit code locally, changes auto-reload:
 
-1. Open `notebooks/h2c_bridge_colab.ipynb`
-2. Connect to your Colab runtime
-3. Set `PROJECT_PATH` in the notebook to your Google Drive folder
-4. **Edit code locally** in `h2c_bridge/` -> **Run cells** to test
+```bash
+python -m ipython
+%load_ext autoreload
+%autoreload 2
 
-The notebook is configured with `%autoreload`, so your code changes apply immediately without restarting the kernel.
+from h2c_bridge import ...
+```
 
-### Visualization
+### Colab Training
 
-We include a full visualization suite for analyzing bridge behavior.
+1. **Connect VSCode to Colab** ([guide](https://github.com/googlecolab/colab-vscode))
+2. **Open** `notebooks/h2c_bridge_colab.ipynb`
+3. **Update** GitHub URL in first cell
+4. **Run** notebook cells
+
+Checkpoints save to WandB (no Drive mount needed).
+
+## Visualization
+
+Generate publication-ready charts:
 
 ```python
 from h2c_bridge.visualization import run_all_visualizations
 
-# Generates publication-ready charts (heatmap, radar, probability shifts)
-run_all_visualizations(engine, config)
+run_all_visualizations(engine, config, themes=("dark", "light"))
+```
+
+Outputs both presentation (dark) and publication (light) versions.
+
+## Checkpoints
+
+### Save
+
+Automatic during training. Three types:
+- `latest`: most recent
+- `best`: highest accuracy  
+- `final`: end of training
+
+### Load
+
+```python
+# From WandB artifact
+engine.load_checkpoint("entity/project/model:best")
+
+# Or local file
+engine.load_checkpoint("path/to/checkpoint.pt")
 ```
 
 ## Project Structure
 
-- **`h2c_bridge/models`**: Core architecture (`H2CAttentionBlock`, `H2CProjector`)
-- **`h2c_bridge/training`**: Training loop and orchestration (`Trainer`, `Engine`)
-- **`h2c_bridge/evaluation`**: MMLU benchmarking and validation
-- **`h2c_bridge/visualization`**: Plotting and analysis tools
-- **`h2c_bridge/data`**: Dataset wrappers and collators
-
-## Configuration
-
-You can customize everything via the config dict:
-
-```python
-config = get_default_config()
-config.update({
-    "SHARER_ID": "meta-llama/Llama-3.1-8B-Instruct",
-    "RECEIVER_ID": "Qwen/Qwen2.5-0.5B-Instruct",
-    "BATCH_SIZE": 8,
-    "lr": 1e-4
-})
 ```
-
-## Checkpoints
-
-Checkpoints are saved to `drive/MyDrive/nlp/checkpoints/` by default:
-- `*_best.pt`: Best validation performance
-- `*_final.pt`: End of training state
+h2c_bridge/
+├── models/          # Bridge architecture
+├── data/            # Dataset handling
+├── training/        # Training loop
+├── evaluation/      # MMLU benchmarks
+└── visualization/   # Publication charts
+```
 
 ## License
 
