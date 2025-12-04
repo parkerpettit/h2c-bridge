@@ -96,17 +96,19 @@ class MMLUDataset(Dataset):
     Used for both Auxiliary Training and Validation.
     """
     
-    def __init__(self, split: str = "auxiliary_train", samples_per_subject: int = None):
+    def __init__(self, split: str = "auxiliary_train", samples_per_subject: int = None, max_samples: int = None):
         """Initialize the dataset.
         
         Args:
             split: Dataset split to load (options: "auxiliary_train", "validation", "test")
-            samples_per_subject: Number of samples per subject/category (default: None, load all)
+            samples_per_subject: Number of samples per subject/category (for validation/test splits)
+            max_samples: Maximum total samples (for auxiliary_train which has no subjects)
         """
         print(f"--- [MMLU] Loading {split} split...")
         # 'all' loads all subjects
         self.dataset = load_dataset("cais/mmlu", "all", split=split)
         self.samples_per_subject = samples_per_subject
+        self.max_samples = max_samples
 
         self.data = []
         self._process_data()
@@ -115,8 +117,8 @@ class MMLUDataset(Dataset):
     def _process_data(self):
         """Process the raw MMLU data into prompt-target pairs.
         
-        If samples_per_subject is set, sample N examples per subject/category.
-        Otherwise, include all examples.
+        For auxiliary_train: uses max_samples (no subject grouping)
+        For validation/test: uses samples_per_subject
         """
         # Group examples by subject
         subject_groups = {}
@@ -126,41 +128,50 @@ class MMLUDataset(Dataset):
                 subject_groups[subject] = []
             subject_groups[subject].append(entry)
         
-        print(f"--- [MMLU] Found {len(subject_groups)} subjects")
+        num_subjects = len(subject_groups)
+        print(f"--- [MMLU] Found {num_subjects} subjects")
         
-        # Process each subject group
-        for subject, entries in subject_groups.items():
-            # Limit to samples_per_subject if specified
-            if self.samples_per_subject is not None:
-                entries = entries[:self.samples_per_subject]
-            
-            for entry in entries:
-                q = entry["question"]
-                choices = entry["choices"]
-                answer_idx = entry["answer"]  # 0..3
-                answer_letter = "ABCD"[answer_idx]
+        # Determine which entries to process
+        if num_subjects == 1 and self.max_samples is not None:
+            # auxiliary_train has no subject field - just use max_samples
+            entries_to_process = list(self.dataset)[:self.max_samples]
+        else:
+            # validation/test has subjects - sample per subject
+            entries_to_process = []
+            for subject, entries in subject_groups.items():
+                if self.samples_per_subject is not None:
+                    entries = entries[:self.samples_per_subject]
+                entries_to_process.extend(entries)
+        
+        # Process all selected entries
+        for entry in entries_to_process:
+            q = entry["question"]
+            choices = entry["choices"]
+            answer_idx = entry["answer"]  # 0..3
+            answer_letter = "ABCD"[answer_idx]
+            subject = entry.get("subject", "unknown")
 
-                # Build the prompt
-                context = "Question: " + q + "\n"
-                for i, choice in enumerate(choices):
-                    context += f"{'ABCD'[i]}) {choice}\n"
+            # Build the prompt
+            context = "Question: " + q + "\n"
+            for i, choice in enumerate(choices):
+                context += f"{'ABCD'[i]}) {choice}\n"
 
-                instruction = (
-                    "\nInstructions:\n"
-                    "Carefully read the question and all options.\n"
-                    "Select the single most correct answer.\n"
-                    "Respond ONLY in the following format: ”The correct answer is A/B/C/D”.\n"
-                    "Do not include any explanations, additional text, or punctuation besides the answer.\n"
-                    "The correct answer is"
-                )
+            instruction = (
+                "\nInstructions:\n"
+                "Carefully read the question and all options.\n"
+                "Select the single most correct answer.\n"
+                "Respond ONLY in the following format: "The correct answer is A/B/C/D".\n"
+                "Do not include any explanations, additional text, or punctuation besides the answer.\n"
+                "The correct answer is"
+            )
 
-                full_prompt = "Accurately answer the following question:\n" + context + instruction
+            full_prompt = "Accurately answer the following question:\n" + context + instruction
 
-                self.data.append({
-                    "prompt": full_prompt,
-                    "target": answer_letter,
-                    "subject": subject
-                })
+            self.data.append({
+                "prompt": full_prompt,
+                "target": answer_letter,
+                "subject": subject
+            })
 
     def __len__(self):
         return len(self.data)

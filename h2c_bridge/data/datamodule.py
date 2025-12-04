@@ -48,10 +48,9 @@ class H2CDataModule:
         #    For 250k OpenHermes, we want MMLU to be ~20% of total
         #    Total = OH + MMLU, so MMLU = 0.2 * Total → MMLU = 0.25 * OH
         #    250k * 0.25 = 62.5k MMLU samples
-        #    57 categories → ~1096 samples per category
-        #    But auxiliary_train only has ~99k total, so we'll use all available (~1735 per subject max)
-        mmlu_samples_per_subject = 1096  # 57 * 1096 ≈ 62.5k MMLU (20% of 312.5k total)
-        mmlu_aux_dataset = MMLUDataset(split="auxiliary_train", samples_per_subject=mmlu_samples_per_subject)
+        #    auxiliary_train has ~99k samples total, so we take 62.5k
+        mmlu_max_samples = 62500  # 20% of 312.5k total
+        mmlu_aux_dataset = MMLUDataset(split="auxiliary_train", max_samples=mmlu_max_samples)
 
         # 3. Combine them for training/validation
         full_dataset = ConcatDataset([oh_dataset, mmlu_aux_dataset])
