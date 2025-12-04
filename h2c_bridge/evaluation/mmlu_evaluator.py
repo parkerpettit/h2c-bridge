@@ -283,7 +283,17 @@ class H2CMMLUEvaluator(H2CBase):
             # 2. Sharer Step (Generate Hint)
             sharer_inputs_formatted = []
             for ctx in raw_contexts:
-                s_prompt = f"{ctx}\n\nIn one sentence, give a hint on how to solve the problem. Do NOT explicitly say the answer. Focus on the key logic and approach needed."
+                # Extract just the question part if possible, otherwise use full context
+                # Context usually starts with "Question: " and ends with choices
+                # We want: "In one clear sentence, describe the most essential background knowledge needed to answer the question: {question} Do NOT directly solve or give answer to the question."
+                
+                # Simple heuristic: remove "Question: " prefix if present
+                clean_ctx = ctx.replace("Question: ", "").strip()
+                # Remove choices if possible (they start with A) ...)
+                # But context in batch['raw_context'] is just the question + choices from MMLUDataset
+                # Let's just use the full context as the "question" for now to be safe
+                
+                s_prompt = f"In one clear sentence, describe the most essential background knowledge needed to answer the question: {clean_ctx} Do NOT directly solve or give answer to the question."
                 sharer_inputs_formatted.append([{"role": "user", "content": s_prompt}])
 
             s_encoded = self.tok_sharer.apply_chat_template(
@@ -318,7 +328,23 @@ class H2CMMLUEvaluator(H2CBase):
                 clean_hint = hint.replace("\n", " ").strip()
 
                 # Construct the final prompt
-                final_content = f"{ctx}\n\n[Hint: {clean_hint}]\n\n{instr}"
+                # We need to reconstruct the full prompt with the hint injected BEFORE instructions
+                # raw_context contains "Question: ... \n Choices: ..."
+                # raw_instruction contains "\nInstructions: ..." (from our new dataset code)
+                
+                # If raw_instruction is empty (e.g. not split correctly), we fallback
+                if not instr:
+                     instr = (
+                        "\nInstructions:\n"
+                        "Carefully read the question and all options.\n"
+                        "Select the single most correct answer.\n"
+                        "Respond ONLY in the following format: ”The correct answer is A/B/C/D”.\n"
+                        "Do not include any explanations, additional text, or punctuation besides the answer.\n"
+                        "The correct answer is"
+                    )
+
+                # Inject hint
+                final_content = f"Accurately answer the following question:\n{ctx}\n[Hint: {clean_hint}]\n{instr}"
                 receiver_inputs_formatted.append([{"role": "user", "content": final_content}])
 
             r_encoded = self.tok_receiver.apply_chat_template(

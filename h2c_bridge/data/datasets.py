@@ -10,12 +10,14 @@ class H2CDatasetWrapper(Dataset):
     Parses OpenHermes-2.5 into prompt/target pairs.
     """
     
-    def __init__(self, split: str = "train", max_samples: int = None):
+    def __init__(self, split: str = "train", max_samples: int = None, tokenizer=None, max_len=2048):
         """Initialize the dataset.
         
         Args:
             split: Dataset split to load (default: "train")
             max_samples: Maximum number of samples to load (default: None, load all)
+            tokenizer: Tokenizer for length filtering (optional)
+            max_len: Maximum sequence length for filtering (default: 2048)
         """
         print(f"Loading OpenHermes-2.5 ({split})...")
         # Load the dataset from HuggingFace
@@ -23,6 +25,9 @@ class H2CDatasetWrapper(Dataset):
 
         if max_samples:
             self.dataset = self.dataset.select(range(max_samples))
+        
+        self.tokenizer = tokenizer
+        self.max_len = max_len
 
         self.data = []
         self._process_data()
@@ -30,6 +35,8 @@ class H2CDatasetWrapper(Dataset):
     def _process_data(self):
         """Iterates through the dataset and extracts the first instruction/response pair."""
         valid_count = 0
+        skipped_count = 0
+        
         for entry in self.dataset:
             convs = entry.get('conversations', [])
 
@@ -48,13 +55,30 @@ class H2CDatasetWrapper(Dataset):
                     break
 
             if first_input and first_target:
+                # Filter by length if tokenizer is provided
+                if self.tokenizer:
+                    # Check combined length (approximate check for sharer input)
+                    # We add generation prompt in collator, so we simulate it here
+                    full_text = self.tokenizer.apply_chat_template(
+                        [{"role": "user", "content": first_input}],
+                        tokenize=False,
+                        add_generation_prompt=True
+                    )
+                    # Rough check: tokenize just the prompt part since that's what hits the sharer limit most often
+                    # Ideally we check prompt + target but prompt is the main constraint for the sharer input
+                    ids = self.tokenizer(full_text, add_special_tokens=False)["input_ids"]
+                    
+                    if len(ids) > self.max_len:
+                        skipped_count += 1
+                        continue
+
                 self.data.append({
                     "prompt": first_input,
                     "target": first_target
                 })
                 valid_count += 1
 
-        print(f"Processed {valid_count} valid conversation pairs.")
+        print(f"Processed {valid_count} valid conversation pairs (Skipped {skipped_count} > {self.max_len} tokens).")
 
     def __len__(self):
         return len(self.data)
@@ -122,11 +146,15 @@ class MMLUDataset(Dataset):
                     context += f"{'ABCD'[i]}) {choice}\n"
 
                 instruction = (
-                    "\nThink carefully, then provide your answer. "
-                    "Output your final answer as a single letter (A, B, C, or D) on the last line in the format 'Answer': <letter>\n"
+                    "\nInstructions:\n"
+                    "Carefully read the question and all options.\n"
+                    "Select the single most correct answer.\n"
+                    "Respond ONLY in the following format: ”The correct answer is A/B/C/D”.\n"
+                    "Do not include any explanations, additional text, or punctuation besides the answer.\n"
+                    "The correct answer is"
                 )
 
-                full_prompt = context + instruction
+                full_prompt = "Accurately answer the following question:\n" + context + instruction
 
                 self.data.append({
                     "prompt": full_prompt,

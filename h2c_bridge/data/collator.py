@@ -110,7 +110,7 @@ class H2CDataCollator:
         raw_contexts = []
         raw_instructions = []
         for p in prompts:
-            split_marker = "\nThink carefully"
+            split_marker = "\nInstructions:"
             if split_marker in p:
                 context, instruction = p.rsplit(split_marker, 1)
                 raw_contexts.append(context)

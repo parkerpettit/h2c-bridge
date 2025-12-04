@@ -22,6 +22,7 @@ class H2CDataModule:
         """
         self.tok_sharer = tok_sharer
         self.tok_receiver = tok_receiver
+        self.config = config
         self.batch_size = config["BATCH_SIZE"]
         self.max_samples = config["MAX_SAMPLES"]
         self.samples_per_subject = config["mmlu_sample_size"]
@@ -35,7 +36,13 @@ class H2CDataModule:
         print(f"--- [DataModule] Loading Datasets (Max {self.max_samples})...")
 
         # 1. Base OpenHermes dataset
-        oh_dataset = H2CDatasetWrapper(split="train", max_samples=self.max_samples)
+        max_len = self.config.get("MAX_LEN", 2048)
+        oh_dataset = H2CDatasetWrapper(
+            split="train", 
+            max_samples=self.max_samples,
+            tokenizer=self.tok_sharer,
+            max_len=max_len
+        )
 
         # 2. MMLU auxiliary train dataset (5% mix)
         #    We want MMLU to be ~5% of the total training data
@@ -58,7 +65,7 @@ class H2CDataModule:
         print(f"--- [DataModule] Split: {len(self.train_set)} Train | {len(self.val_set)} Val")
 
         # 5. Shared collator for train/val (same (prompt, target) interface)
-        self.collator = H2CDataCollator(self.tok_sharer, self.tok_receiver)
+        self.collator = H2CDataCollator(self.tok_sharer, self.tok_receiver, max_len=max_len)
 
         # 6. Train / Val loaders
         self.train_loader = DataLoader(

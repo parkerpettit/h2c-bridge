@@ -31,6 +31,7 @@ def get_default_config():
         
         # Dataset size
         "MAX_SAMPLES": 100_000,  # max samples of OpenHermes to pretrain bridge on
+        "MAX_LEN": 2048,  # Max sequence length (filter longer examples)
         "BATCH_SIZE": 8,
         "lr": 1e-4,
         
