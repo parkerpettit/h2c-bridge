@@ -160,7 +160,7 @@ class MMLUDataset(Dataset):
                 "\nInstructions:\n"
                 "Carefully read the question and all options.\n"
                 "Select the single most correct answer.\n"
-                "Respond ONLY in the following format: "The correct answer is A/B/C/D".\n"
+                "Respond ONLY in the following format: 'The correct answer is A/B/C/D'.\n"
                 "Do not include any explanations, additional text, or punctuation besides the answer.\n"
                 "The correct answer is"
             )
