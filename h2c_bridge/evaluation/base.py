@@ -85,7 +85,13 @@ class H2CBase:
         # This is outside no_grad() so the Trainer can track gradients here.
         modified_cache = self.bridge.cache_project(sharer_hidden, receiver_cache)
 
+        # CRITICAL MEMORY FIX: Delete the original receiver cache - we now have a copy in modified_cache
+        del receiver_cache
+        
         # Cleanup intermediate tensors (modified_cache has its own copies)
         del sharer_hidden
+        
+        # Force CUDA to reclaim memory before returning
+        torch.cuda.empty_cache()
 
         return modified_cache

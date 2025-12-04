@@ -101,7 +101,11 @@ class H2CTrainer(H2CBase):
         loss.backward()
 
         # Free computation graph after backward (gradients computed)
+        # CRITICAL: Delete the grown cache from receiver output first
+        if hasattr(outputs, 'past_key_values') and outputs.past_key_values is not None:
+            del outputs.past_key_values
         del modified_cache, outputs
+        torch.cuda.empty_cache()
 
         # Collect gradient norms for diagnostics
         key_attn_grad = 0.0
