@@ -40,8 +40,9 @@ class H2CDataModule:
         # 2. MMLU auxiliary train dataset (5% mix)
         #    We want MMLU to be ~5% of the total training data
         #    OpenHermes is max_samples. So MMLU should be max_samples * 0.05
-        mmlu_train_size = int(self.max_samples * 0.05)
-        mmlu_aux_dataset = MMLUDataset(split="auxiliary_train", max_samples=mmlu_train_size)
+        #    Use 5 samples per subject to get a reasonable mix across categories
+        mmlu_samples_per_subject = 5
+        mmlu_aux_dataset = MMLUDataset(split="auxiliary_train", samples_per_subject=mmlu_samples_per_subject)
 
         # 3. Combine them for training/validation
         full_dataset = ConcatDataset([oh_dataset, mmlu_aux_dataset])
@@ -75,8 +76,8 @@ class H2CDataModule:
 
         # 7. MMLU EVAL (Validation Split)
         print(f"--- [DataModule] Setting up MMLU Eval (Validation Split)...")
-        # Use validation split for evaluation
-        mmlu_eval_dataset = MMLUDataset(split="validation")
+        # Use validation split for evaluation with samples_per_subject from config
+        mmlu_eval_dataset = MMLUDataset(split="validation", samples_per_subject=self.samples_per_subject)
 
         eval_batch_size = max(1, self.batch_size // 2)
         self.mmlu_loader = DataLoader(

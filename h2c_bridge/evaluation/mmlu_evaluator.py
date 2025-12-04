@@ -4,6 +4,7 @@ import re
 import time
 
 import torch
+import wandb
 from tqdm.auto import tqdm
 
 from h2c_bridge.evaluation.base import H2CBase
@@ -32,18 +33,21 @@ class H2CMMLUEvaluator(H2CBase):
         self.tok_sharer = tok_sharer
 
     @torch.no_grad()
-    def evaluate_baselines(self, dataloader, max_new_tokens=15):
+    def evaluate_baselines(self, dataloader, max_new_tokens=15, debug_mode=False):
         """Runs static baselines.
         
         Args:
             dataloader: MMLU dataloader
             max_new_tokens: Max tokens to generate
+            debug_mode: If True, stop after 5 samples for quick testing
             
         Returns:
             dict: Results for each mode
         """
         print("\n" + "="*30)
         print(">>> RUNNING BASELINES (Deterministic)")
+        if debug_mode:
+            print("[DEBUG MODE] Will stop after 5 samples")
         print("="*30 + "\n")
 
         results = {}
@@ -51,25 +55,28 @@ class H2CMMLUEvaluator(H2CBase):
 
         for mode in modes:
             print(f"--- Running Baseline: {mode} ---")
-            acc, err, lat = self._eval_loop(dataloader, mode=mode, max_new_tokens=max_new_tokens)
+            acc, err, lat = self._eval_loop(dataloader, mode=mode, max_new_tokens=max_new_tokens, debug_mode=debug_mode)
             results[mode] = {"acc": acc, "err": err, "latency_ms": lat}
 
         return results
 
     @torch.no_grad()
-    def evaluate_baselines_detailed(self, dataloader, max_new_tokens=15, include_text_to_text=True):
+    def evaluate_baselines_detailed(self, dataloader, max_new_tokens=15, include_text_to_text=True, debug_mode=False):
         """Runs baselines with detailed logging.
         
         Args:
             dataloader: MMLU dataloader
             max_new_tokens: Max tokens to generate
             include_text_to_text: Include text-to-text baseline
+            debug_mode: If True, stop after 5 samples for quick testing
             
         Returns:
             dict: Results with details
         """
         print("\n" + "="*30)
         print(">>> RUNNING BASELINES (Detailed)")
+        if debug_mode:
+            print("[DEBUG MODE] Will stop after 5 samples")
         print("="*30 + "\n")
 
         results = {}
@@ -80,7 +87,7 @@ class H2CMMLUEvaluator(H2CBase):
         for mode in modes:
             print(f"--- Running Baseline (Detailed): {mode} ---")
             acc, err, lat, details = self._eval_loop(
-                dataloader, mode=mode, max_new_tokens=max_new_tokens, collect_details=True
+                dataloader, mode=mode, max_new_tokens=max_new_tokens, collect_details=True, debug_mode=debug_mode
             )
             results[mode] = {
                 "acc": acc,
@@ -92,34 +99,36 @@ class H2CMMLUEvaluator(H2CBase):
         return results
 
     @torch.no_grad()
-    def evaluate_accuracy(self, dataloader, max_new_tokens=15):
+    def evaluate_accuracy(self, dataloader, max_new_tokens=15, debug_mode=False):
         """Evaluates bridge accuracy.
         
         Args:
             dataloader: MMLU dataloader
             max_new_tokens: Max tokens to generate
+            debug_mode: If True, stop after 5 samples for quick testing
             
         Returns:
             (accuracy, error_rate, latency_ms)
         """
         self.bridge.eval()
-        return self._eval_loop(dataloader, mode="bridge", max_new_tokens=max_new_tokens)
+        return self._eval_loop(dataloader, mode="bridge", max_new_tokens=max_new_tokens, debug_mode=debug_mode)
 
     @torch.no_grad()
-    def evaluate_accuracy_detailed(self, dataloader, max_new_tokens=15):
+    def evaluate_accuracy_detailed(self, dataloader, max_new_tokens=15, debug_mode=False):
         """Evaluates bridge with detailed logging.
         
         Args:
             dataloader: MMLU dataloader
             max_new_tokens: Max tokens to generate
+            debug_mode: If True, stop after 5 samples for quick testing
             
         Returns:
             (accuracy, error_rate, latency, detailed_results)
         """
         self.bridge.eval()
-        return self._eval_loop(dataloader, mode="bridge", max_new_tokens=max_new_tokens, collect_details=True)
+        return self._eval_loop(dataloader, mode="bridge", max_new_tokens=max_new_tokens, collect_details=True, debug_mode=debug_mode)
 
-    def _eval_loop(self, dataloader, mode, max_new_tokens, collect_details=False):
+    def _eval_loop(self, dataloader, mode, max_new_tokens, collect_details=False, debug_mode=False):
         """Main evaluation loop.
         
         Args:
@@ -127,14 +136,20 @@ class H2CMMLUEvaluator(H2CBase):
             mode: Evaluation mode ("bridge", "receiver_only", "sharer_only", "text_to_text")
             max_new_tokens: Maximum tokens to generate
             collect_details: If True, collect detailed results for each sample
+            debug_mode: If True, stop after 5 samples for quick testing
             
         Returns:
             Tuple of (accuracy, error_rate, latency_ms) or (accuracy, error_rate, latency_ms, detailed_results) if collect_details=True
         """
         stats = {"correct": 0, "total": 0, "format_errors": 0, "total_time": 0.0}
         detailed_results = [] if collect_details else None
+        
+        # WandB example logging
+        wandb_log_examples = self.config.get("wandb_log_examples", 10)
+        wandb_examples = [] if wandb_log_examples > 0 else None
 
-        progress_bar = tqdm(dataloader, desc=f"Eval [{mode}]", leave=False, mininterval=3.0)
+        desc = f"Eval [{mode}]" + (" [DEBUG]" if debug_mode else "")
+        progress_bar = tqdm(dataloader, desc=desc, leave=False, mininterval=3.0)
 
         for batch_idx, batch in enumerate(progress_bar):
             # 1. Measure Generation Time
@@ -149,9 +164,20 @@ class H2CMMLUEvaluator(H2CBase):
             stats["total_time"] += (end_time - start_time)
 
             # 2. Score & Log
-            batch_details = self._score_batch(prompt_texts, gen_texts, labels, stats, subjects, collect_details)
+            batch_details = self._score_batch(
+                prompt_texts, gen_texts, labels, stats, subjects, 
+                collect_details=collect_details,
+                wandb_examples=wandb_examples,
+                wandb_max=wandb_log_examples,
+                mode=mode
+            )
             if collect_details and batch_details:
                 detailed_results.extend(batch_details)
+
+            # 3. Debug Mode Early Exit
+            if debug_mode and stats["total"] >= 5:
+                print(f"\n[DEBUG MODE] Stopping early after {stats['total']} samples")
+                break
 
             # Periodic memory cleanup (every 10 batches)
             if batch_idx % 10 == 0:
@@ -164,6 +190,15 @@ class H2CMMLUEvaluator(H2CBase):
         avg_latency_ms = (stats["total_time"] / total)
 
         print(f"[{mode}] Acc: {accuracy:.2%} | Err: {error_rate:.2%} | Latency: {avg_latency_ms:.1f}ms")
+
+        # Log examples to WandB
+        if wandb_examples and len(wandb_examples) > 0:
+            table = wandb.Table(
+                columns=["mode", "subject", "prompt_preview", "response", "prediction", "label", "correct", "status"],
+                data=wandb_examples
+            )
+            wandb.log({f"eval_examples/{mode}": table})
+            print(f"[WandB] Logged {len(wandb_examples)} examples to eval_examples/{mode}")
 
         if mode == "bridge":
             self.bridge.train()
@@ -319,8 +354,8 @@ class H2CMMLUEvaluator(H2CBase):
 
         return prompt_texts, gen_texts, batch['labels']
 
-    def _score_batch(self, prompt_texts, gen_texts, labels, stats, subjects=None, collect_details=False):
-        """Scores the batch and prints verbose logs if enabled.
+    def _score_batch(self, prompt_texts, gen_texts, labels, stats, subjects=None, collect_details=False, wandb_examples=None, wandb_max=10, mode="unknown"):
+        """Scores the batch and collects examples for WandB if enabled.
         
         Args:
             prompt_texts: List of prompts
@@ -329,6 +364,9 @@ class H2CMMLUEvaluator(H2CBase):
             stats: Dictionary of statistics to update
             subjects: List of subjects (optional)
             collect_details: If True, collect detailed results
+            wandb_examples: List to append WandB examples to (optional)
+            wandb_max: Maximum number of examples to collect for WandB
+            mode: Evaluation mode name
             
         Returns:
             List of detailed results if collect_details=True, else None
@@ -363,26 +401,36 @@ class H2CMMLUEvaluator(H2CBase):
                     "invalid": is_invalid
                 })
 
-            # --- VERBOSE LOGGING ---
-            if self.config.get("verbose", False):
-                self._log_sample(prompt, gen_text, truth, pred, is_correct, is_invalid)
+            # Collect examples for WandB logging (limit to wandb_max)
+            if wandb_examples is not None and len(wandb_examples) < wandb_max:
+                # Determine status
+                if is_invalid:
+                    status = "format_error"
+                    correct_symbol = "⚠️"
+                elif is_correct:
+                    status = "correct"
+                    correct_symbol = "✓"
+                else:
+                    status = "wrong"
+                    correct_symbol = "✗"
+                
+                # Truncate prompt to last 200 chars for table readability
+                prompt_preview = "..." + prompt.strip()[-200:] if len(prompt.strip()) > 200 else prompt.strip()
+                
+                wandb_examples.append([
+                    mode,  # mode
+                    subject,  # subject
+                    prompt_preview,  # prompt_preview
+                    gen_text.strip(),  # response
+                    pred,  # prediction
+                    truth,  # label
+                    correct_symbol,  # correct
+                    status  # status
+                ])
 
         return batch_details
 
-    def _log_sample(self, prompt, gen_text, truth, pred, is_correct, is_invalid):
-        """Log a single sample (verbose mode)."""
-        if is_invalid:
-            status = "⚠️ FORMAT ERROR"
-        else:
-            status = "✅ CORRECT" if is_correct else "❌ WRONG"
 
-        print("\n" + "="*50)
-        # Only show last 300 chars of prompt to keep log clean
-        print(f"--- PROMPT ---\n...{prompt.strip()[-300:]}")
-        print(f"--- RESPONSE ---\n{gen_text.strip()}")
-        print(f"--- EVAL ---")
-        print(f"Truth: {truth} | Pred: {pred} | Result: {status}")
-        print("="*50 + "\n")
 
     def _extract_json_answer(self, text):
         """Extracts answer letter from text.
