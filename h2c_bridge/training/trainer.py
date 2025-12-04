@@ -153,7 +153,18 @@ class H2CTrainer(H2CBase):
         else:
             self._step_count = 1
         if self._step_count % 100 == 0:
-            gate_val = self.bridge.key_modifiers[0].gate.item()
-            print(f"[Step {self._step_count}] Key gate[0] = {gate_val:.6f} (init was ~1.0)")
+            gate = self.bridge.key_modifiers[0].gate
+            gate_val = gate.item()
+            gate_grad = gate.grad.item() if gate.grad is not None else "NO GRAD"
+            gate_id = id(gate)
+            
+            # Check if this param is in optimizer
+            opt_param_ids = set()
+            for group in self.optimizer.param_groups:
+                for p in group['params']:
+                    opt_param_ids.add(id(p))
+            in_optimizer = gate_id in opt_param_ids
+            
+            print(f"[Step {self._step_count}] gate[0]={gate_val:.6f} grad={gate_grad} in_opt={in_optimizer} id={gate_id}")
 
         return loss_value

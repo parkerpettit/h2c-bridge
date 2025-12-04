@@ -105,14 +105,18 @@ class H2CModelFactory:
         s_dims = self._get_model_dims(self.sharer_id)
         r_dims = self._get_model_dims(self.receiver_id)
 
+        # CRITICAL: Use float32 for bridge parameters, NOT bfloat16!
+        # bfloat16 has ~0.004 precision at value 1.0, but gate updates are ~4e-6 per step
+        # This causes updates to round to zero. Training still works via attention weights
+        # (which have larger updates) but gates appear frozen.
         self.bridge = H2CProjector(
             sharer_dim=s_dims["hidden_dim"],
             receiver_head_dim=r_dims["head_dim"],
             receiver_num_heads=r_dims["kv_heads"],  # Uses KV heads for GQA compatibility
             num_receiver_layers=r_dims["num_layers"],
             sharer_num_layers=s_dims["num_layers"],
-            proj_num_heads=16,  # Increased from 4 for more expressive attention (56 dim/head)
-            dtype=self.dtype
+            proj_num_heads=16,  # 16 heads for expressive attention
+            dtype=torch.float32  # MUST be float32 for small gradient updates
         ).to(self.device)
         
         # Print parameter count
