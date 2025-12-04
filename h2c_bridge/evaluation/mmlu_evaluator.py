@@ -47,7 +47,7 @@ class H2CMMLUEvaluator(H2CBase):
         print("\n" + "="*30)
         print(">>> RUNNING BASELINES (Deterministic)")
         if debug_mode:
-            print("[DEBUG MODE] Will stop after 5 samples")
+            print("[DEBUG MODE] Will stop after 25 samples")
         print("="*30 + "\n")
 
         results = {}
@@ -68,7 +68,7 @@ class H2CMMLUEvaluator(H2CBase):
             dataloader: MMLU dataloader
             max_new_tokens: Max tokens to generate
             include_text_to_text: Include text-to-text baseline
-            debug_mode: If True, stop after 5 samples for quick testing
+            debug_mode: If True, stop after 25 samples for quick testing
             
         Returns:
             dict: Results with details
@@ -76,7 +76,7 @@ class H2CMMLUEvaluator(H2CBase):
         print("\n" + "="*30)
         print(">>> RUNNING BASELINES (Detailed)")
         if debug_mode:
-            print("[DEBUG MODE] Will stop after 5 samples")
+            print("[DEBUG MODE] Will stop after 25 samples")
         print("="*30 + "\n")
 
         results = {}
@@ -120,7 +120,7 @@ class H2CMMLUEvaluator(H2CBase):
         Args:
             dataloader: MMLU dataloader
             max_new_tokens: Max tokens to generate
-            debug_mode: If True, stop after 5 samples for quick testing
+            debug_mode: If True, stop after 25 samples for quick testing
             
         Returns:
             (accuracy, error_rate, latency, detailed_results)
@@ -136,7 +136,7 @@ class H2CMMLUEvaluator(H2CBase):
             mode: Evaluation mode ("bridge", "receiver_only", "sharer_only", "text_to_text")
             max_new_tokens: Maximum tokens to generate
             collect_details: If True, collect detailed results for each sample
-            debug_mode: If True, stop after 5 samples for quick testing
+            debug_mode: If True, stop after 25 samples for quick testing
             
         Returns:
             Tuple of (accuracy, error_rate, latency_ms) or (accuracy, error_rate, latency_ms, detailed_results) if collect_details=True
@@ -175,7 +175,7 @@ class H2CMMLUEvaluator(H2CBase):
                 detailed_results.extend(batch_details)
 
             # 3. Debug Mode Early Exit
-            if debug_mode and stats["total"] >= 5:
+            if debug_mode and stats["total"] >= 25:
                 print(f"\n[DEBUG MODE] Stopping early after {stats['total']} samples")
                 break
 
