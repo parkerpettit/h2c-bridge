@@ -122,9 +122,16 @@ class H2CTrainer(H2CBase):
             if block.gate.grad is not None:
                 gate_grad += block.gate.grad.norm().item()
 
-        # Clip to 10.0 instead of 1.0 - with grad norms spiking to 3000+,
-        # clipping to 1.0 makes effective updates ~1e-8, appearing as flat plots
-        grad_norm = torch.nn.utils.clip_grad_norm_(self.bridge.parameters(), 10.0)
+        # Calculate total grad norm BEFORE clipping for diagnostics
+        pre_clip_norm = 0.0
+        for p in self.bridge.parameters():
+            if p.grad is not None:
+                pre_clip_norm += p.grad.data.norm(2).item() ** 2
+        pre_clip_norm = pre_clip_norm ** 0.5
+        
+        # Clip to 500.0 - essentially disabled to allow real parameter updates
+        # We can reduce this once we confirm parameters are moving
+        grad_norm = torch.nn.utils.clip_grad_norm_(self.bridge.parameters(), 500.0)
 
         # Log metrics (need .item() before deleting)
         loss_value = loss.item()
@@ -132,11 +139,21 @@ class H2CTrainer(H2CBase):
 
         wandb.log({
             "Training/Grad Norm": grad_norm.item(),
+            "Training/Pre-Clip Grad Norm": pre_clip_norm,
             "Training/Key Attn Grad Norm": key_attn_grad,
             "Training/Value Attn Grad Norm": value_attn_grad,
             "Training/Gate Grad Norm": gate_grad,
         })
 
         self.optimizer.step()
+        
+        # DIAGNOSTIC: Print gate value every 100 steps to verify they're changing
+        if hasattr(self, '_step_count'):
+            self._step_count += 1
+        else:
+            self._step_count = 1
+        if self._step_count % 100 == 0:
+            gate_val = self.bridge.key_modifiers[0].gate.item()
+            print(f"[Step {self._step_count}] Key gate[0] = {gate_val:.6f} (init was ~1.0)")
 
         return loss_value
