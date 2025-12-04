@@ -108,14 +108,23 @@ class H2CEngine:
         self.trainer = H2CTrainer(
             self.sharer, self.receiver, self.bridge, self.optimizer, self.config, device=self.factory.device
         )
+        
+        # CRITICAL FIX: Ensure engine uses the same bridge instance as the trainer
+        # The trainer might have a different instance if optimization was re-setup
+        if self.bridge is not self.trainer.bridge:
+            print(f"--- [Engine] Syncing bridge reference from Trainer ({id(self.trainer.bridge)}) to Engine")
+            self.bridge = self.trainer.bridge
 
     def _setup_evaluators(self):
         """Sets up evaluators."""
+        # Ensure we use the bridge that is actually being trained (if trainer exists)
+        bridge_to_use = self.trainer.bridge if hasattr(self, 'trainer') else self.bridge
+        
         self.evaluator = H2CEvaluator(
-            self.sharer, self.receiver, self.bridge, self.factory.tok_receiver, self.config, device=self.factory.device
+            self.sharer, self.receiver, bridge_to_use, self.factory.tok_receiver, self.config, device=self.factory.device
         )
         self.mmlu_evaluator = H2CMMLUEvaluator(
-            self.sharer, self.receiver, self.bridge, self.factory.tok_receiver, self.factory.tok_sharer, self.config, device=self.factory.device
+            self.sharer, self.receiver, bridge_to_use, self.factory.tok_receiver, self.factory.tok_sharer, self.config, device=self.factory.device
         )
         self.baseline_ppl_evaluator = BaselinePerplexityEvaluator(
             self.sharer, self.receiver, self.factory.tok_sharer, self.factory.tok_receiver, device=self.factory.device

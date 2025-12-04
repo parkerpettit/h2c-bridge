@@ -58,7 +58,13 @@ class H2CBase:
             )
             # Clone ALL hidden states to detach them
             # This allows us to delete sharer_out and free VRAM
-            sharer_hidden = tuple(h.clone() for h in sharer_out.hidden_states)
+            # IMPORTANT: detach() is crucial to ensure no graph history is kept
+            sharer_hidden = tuple(h.detach().clone() for h in sharer_out.hidden_states)
+            
+            # CRITICAL MEMORY FIX: Explicitly delete the huge KV cache
+            if hasattr(sharer_out, 'past_key_values'):
+                del sharer_out.past_key_values
+                
             del sharer_out
 
             # 2. Receiver (Pre-fill)
