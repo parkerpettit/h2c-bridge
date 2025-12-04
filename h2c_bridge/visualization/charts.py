@@ -235,15 +235,33 @@ def log_gate_dynamics(engine):
     format_card(ax, title="Learned Gate Strengths by Layer",
                  subtitle="0 = no contribution, 1 = full contribution from bridge")
 
-    # Reference lines at 0, 0.5, and 1
-    ax.axhline(0.5, color=Theme.TEXT_MUTED, linewidth=1, linestyle='--', alpha=0.5, zorder=1)
+    # Calculate dynamic y-axis limits based on actual values
+    all_gates = k_gates + v_gates
+    gate_min = min(all_gates)
+    gate_max = max(all_gates)
+    gate_range = gate_max - gate_min
+    
+    # Add padding (15% of range or minimum 0.05)
+    padding = max(gate_range * 0.15, 0.05)
+    y_min = max(0, gate_min - padding)  # Don't go below 0
+    y_max = min(1, gate_max + padding)  # Don't go above 1
+    
+    # If range is very small, ensure minimum visible range of 0.1
+    if y_max - y_min < 0.1:
+        center = (y_min + y_max) / 2
+        y_min = max(0, center - 0.05)
+        y_max = min(1, center + 0.05)
+
+    # Reference line at midpoint of visible range (instead of always 0.5)
+    mid_point = (y_min + y_max) / 2
+    ax.axhline(mid_point, color=Theme.TEXT_MUTED, linewidth=1, linestyle='--', alpha=0.4, zorder=1)
 
     # Key gates - with fill
     line_k, = ax.plot(layers, k_gates,
                       marker='o', markersize=8, markeredgecolor='white', markeredgewidth=1.5,
                       linestyle='-', linewidth=2.5,
                       color=Theme.ACCENT_PRIMARY, label='Key Modifier', zorder=3)
-    ax.fill_between(layers, k_gates, 0,
+    ax.fill_between(layers, k_gates, y_min,
                     color=Theme.ACCENT_PRIMARY, alpha=0.15, zorder=2)
 
     # Value gates - with fill
@@ -251,28 +269,30 @@ def log_gate_dynamics(engine):
                       marker='s', markersize=7, markeredgecolor='white', markeredgewidth=1.5,
                       linestyle='--', linewidth=2.5,
                       color=Theme.ACCENT_WARNING, label='Value Modifier', zorder=3)
-    ax.fill_between(layers, v_gates, 0,
+    ax.fill_between(layers, v_gates, y_min,
                     color=Theme.ACCENT_WARNING, alpha=0.1, zorder=2)
 
-    # Styling
+    # Styling with dynamic limits
     ax.set_xlabel("Layer Index", labelpad=10)
     ax.set_ylabel("Gate Strength", labelpad=10)
-    ax.set_ylim(-0.05, 1.1)
+    ax.set_ylim(y_min, y_max)
     ax.set_xticks(layers)
 
-    # Add region labels
-    ax.text(0.98, 0.95, "HIGH CONTRIBUTION", transform=ax.transAxes,
-            fontsize=8, color=Theme.ACCENT_SUCCESS, alpha=0.5,
-            ha='right', va='top', fontweight='bold')
-    ax.text(0.98, 0.05, "LOW CONTRIBUTION", transform=ax.transAxes,
-            fontsize=8, color=Theme.ACCENT_WARNING, alpha=0.5,
-            ha='right', va='bottom', fontweight='bold')
+    # Add region labels if range permits (only if we're showing a wide enough range)
+    if y_max - y_min > 0.3:
+        ax.text(0.98, 0.95, "HIGH CONTRIBUTION", transform=ax.transAxes,
+                fontsize=8, color=Theme.ACCENT_SUCCESS, alpha=0.5,
+                ha='right', va='top', fontweight='bold')
+        ax.text(0.98, 0.05, "LOW CONTRIBUTION", transform=ax.transAxes,
+                fontsize=8, color=Theme.ACCENT_WARNING, alpha=0.5,
+                ha='right', va='bottom', fontweight='bold')
 
     # Statistics box (enhancement)
     k_arr, v_arr = np.array(k_gates), np.array(v_gates)
     stats_text = (
         f"Key:   mean={k_arr.mean():.3f}  std={k_arr.std():.3f}  range=[{k_arr.min():.2f}, {k_arr.max():.2f}]\n"
-        f"Value: mean={v_arr.mean():.3f}  std={v_arr.std():.3f}  range=[{v_arr.min():.2f}, {v_arr.max():.2f}]"
+        f"Value: mean={v_arr.mean():.3f}  std={v_arr.std():.3f}  range=[{v_arr.min():.2f}, {v_arr.max():.2f}]\n"
+        f"Y-axis: [{y_min:.2f}, {y_max:.2f}] (auto-scaled for clarity)"
     )
     props = dict(boxstyle='round,pad=0.4', facecolor=Theme.BG_ELEVATED,
                  edgecolor=Theme.BORDER, alpha=0.9)
@@ -289,6 +309,7 @@ def log_gate_dynamics(engine):
     plt.close(fig)
 
     print("[Viz] Gate dynamics logged.")
+
 
 
 @safe_viz
