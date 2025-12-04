@@ -118,7 +118,9 @@ class H2CTrainer(H2CBase):
             if block.gate.grad is not None:
                 gate_grad += block.gate.grad.norm().item()
 
-        grad_norm = torch.nn.utils.clip_grad_norm_(self.bridge.parameters(), 1.0)
+        # Clip to 10.0 instead of 1.0 - with grad norms spiking to 3000+,
+        # clipping to 1.0 makes effective updates ~1e-8, appearing as flat plots
+        grad_norm = torch.nn.utils.clip_grad_norm_(self.bridge.parameters(), 10.0)
 
         # Log metrics (need .item() before deleting)
         loss_value = loss.item()
