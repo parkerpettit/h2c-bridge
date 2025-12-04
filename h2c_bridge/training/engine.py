@@ -156,7 +156,30 @@ class H2CEngine:
         log_bridge_every = self.config.get("log_bridge_every", 100)
 
         for batch in progress_bar:
-            loss = self.trainer.train_step(batch)
+            # Proactive memory check - skip batch if memory is critically low
+            if torch.cuda.is_available():
+                allocated = torch.cuda.memory_allocated() / 1024**3
+                total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+                if allocated / total > 0.90:  # >90% used
+                    print(f"\n[WARNING] Memory at {allocated:.1f}/{total:.1f}GB ({allocated/total:.0%}), skipping batch...")
+                    torch.cuda.empty_cache()
+                    gc.collect()
+                    continue
+            
+            try:
+                loss = self.trainer.train_step(batch)
+            except torch.cuda.OutOfMemoryError:
+                # Handle OOM by skipping this batch (likely very long sequences)
+                print(f"\n[WARNING] OOM at step {self.global_step}, clearing memory and skipping...")
+                # Aggressive cleanup
+                self.optimizer.zero_grad(set_to_none=True)  # More aggressive than zero_grad()
+                if hasattr(self.trainer, 'bridge'):
+                    self.trainer.bridge.zero_grad(set_to_none=True)
+                torch.cuda.empty_cache()
+                gc.collect()
+                torch.cuda.empty_cache()  # Call again after gc
+                continue  # Skip to next batch
+            
             self.global_step += 1
 
             # Step the scheduler
