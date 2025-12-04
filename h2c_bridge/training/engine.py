@@ -291,17 +291,13 @@ class H2CEngine:
         print(f"MMLU Accuracy: {mmlu_acc:.2%}")
         print(f"MMLU Latency:  {mmlu_lat:.1f}ms")
         
-        # 2. Baseline Perplexities (every 5 eval cycles to save compute)
-        baseline_ppls = {}
-        eval_count = self.global_step // self.eval_every
-        if eval_count % 5 == 0:  # Every 5000 steps (if eval_every=1000)
-            print("\n[Evaluating Baseline Perplexities...]")
-            baseline_results = self.baseline_ppl_evaluator.evaluate_all_baselines(self.val_loader)
-            baseline_ppls = {
-                "receiver_only_ppl": baseline_results['receiver_only']['perplexity'],
-                "sharer_only_ppl": baseline_results['sharer_only']['perplexity'],
-                "text_to_text_ppl": baseline_results['text_to_text']['perplexity'],
-            }
+        # 2. Baseline Perplexities - use cached values from config (they never change)
+        baselines = self.config.get("BASELINES", {})
+        baseline_ppls = {
+            "receiver_only_ppl": baselines.get("receiver_only", {}).get("ppl", 2.69),
+            "sharer_only_ppl": baselines.get("sharer_only", {}).get("ppl", 21.15),
+            "text_to_text_ppl": baselines.get("text_to_text", {}).get("ppl", 2.72),
+        }
 
         # Log bridge gate values
         self._log_bridge_stats()

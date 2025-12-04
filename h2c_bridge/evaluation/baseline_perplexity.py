@@ -85,7 +85,10 @@ class BaselinePerplexityEvaluator:
     
     @torch.no_grad()
     def evaluate_sharer_only_loss(self, dataloader):
-        """Evaluate sharer-only loss.
+        """Evaluate sharer-only loss on TARGET generation.
+        
+        Measures how well the sharer predicts the target response given the prompt.
+        This is a fair comparison to receiver-only.
         
         Args:
             dataloader: Validation dataloader (OpenHermes val set)
@@ -100,25 +103,69 @@ class BaselinePerplexityEvaluator:
         progress_bar = tqdm(dataloader, desc="Sharer-Only Perplexity", leave=False)
         
         for batch in progress_bar:
-            # Sharer processes its input
-            sharer_ids = batch['sharer_input_ids'].to(self.device)
-            sharer_mask = batch['sharer_mask'].to(self.device)
+            # Get raw prompts and targets from batch
+            raw_prompts = batch.get('raw_context', None)
+            if raw_prompts is None:
+                # Fall back to decoding receiver prompt
+                raw_prompts = self.tok_receiver.batch_decode(
+                    batch['receiver_prompt_ids'], skip_special_tokens=True
+                )
             
-            # For sharer, we need to create labels from the input
-            # Shift input by 1 to create labels (standard LM loss)
-            labels = sharer_ids.clone()
-            labels[sharer_mask == 0] = -100  # Mask padding
+            # Get raw targets
+            raw_targets = self.tok_receiver.batch_decode(
+                batch['receiver_target_ids'], skip_special_tokens=True
+            )
+            
+            # Format for sharer: prompt -> target
+            sharer_inputs_formatted = []
+            for prompt, target in zip(raw_prompts, raw_targets):
+                sharer_inputs_formatted.append([
+                    {"role": "user", "content": prompt.strip()},
+                    {"role": "assistant", "content": target.strip()}
+                ])
+            
+            # Tokenize full conversation (prompt + target)
+            encoded = self.tok_sharer.apply_chat_template(
+                sharer_inputs_formatted,
+                tokenize=True,
+                add_generation_prompt=False,  # Include assistant response
+                padding=True,
+                return_tensors="pt",
+                return_dict=True
+            )
+            input_ids = encoded["input_ids"].to(self.device)
+            attention_mask = encoded["attention_mask"].to(self.device)
+            
+            # Get prompt-only length to know where targets start
+            prompt_only_formatted = []
+            for prompt in raw_prompts:
+                prompt_only_formatted.append([{"role": "user", "content": prompt.strip()}])
+            
+            prompt_encoded = self.tok_sharer.apply_chat_template(
+                prompt_only_formatted,
+                tokenize=True,
+                add_generation_prompt=True,
+                padding=True,
+                return_tensors="pt",
+                return_dict=True
+            )
+            prompt_len = prompt_encoded["input_ids"].shape[1]
+            
+            # Create labels: -100 for prompt, actual tokens for target
+            labels = input_ids.clone()
+            labels[:, :prompt_len] = -100  # Ignore prompt tokens
+            labels[attention_mask == 0] = -100  # Ignore padding
             
             outputs = self.sharer(
-                input_ids=sharer_ids,
-                attention_mask=sharer_mask,
+                input_ids=input_ids,
+                attention_mask=attention_mask,
                 labels=labels
             )
             
             total_loss += outputs.loss.item()
             num_batches += 1
             
-            del sharer_ids, sharer_mask, labels, outputs
+            del input_ids, attention_mask, labels, outputs
         
         torch.cuda.empty_cache()
         
