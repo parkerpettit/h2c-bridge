@@ -129,8 +129,7 @@ class H2CTrainer(H2CBase):
                 pre_clip_norm += p.grad.data.norm(2).item() ** 2
         pre_clip_norm = pre_clip_norm ** 0.5
         
-        # Clip to 500.0 - essentially disabled to allow real parameter updates
-        # We can reduce this once we confirm parameters are moving
+        # Clip to 500.0
         grad_norm = torch.nn.utils.clip_grad_norm_(self.bridge.parameters(), 500.0)
 
         # Log metrics (need .item() before deleting)
@@ -147,24 +146,5 @@ class H2CTrainer(H2CBase):
 
         self.optimizer.step()
         
-        # DIAGNOSTIC: Print gate value every 100 steps to verify they're changing
-        if hasattr(self, '_step_count'):
-            self._step_count += 1
-        else:
-            self._step_count = 1
-        if self._step_count % 100 == 0:
-            gate = self.bridge.key_modifiers[0].gate
-            gate_val = gate.item()
-            gate_grad = gate.grad.item() if gate.grad is not None else "NO GRAD"
-            gate_id = id(gate)
-            
-            # Check if this param is in optimizer
-            opt_param_ids = set()
-            for group in self.optimizer.param_groups:
-                for p in group['params']:
-                    opt_param_ids.add(id(p))
-            in_optimizer = gate_id in opt_param_ids
-            
-            print(f"[Step {self._step_count}] gate[0]={gate_val:.6f} grad={gate_grad} in_opt={in_optimizer} id={gate_id}")
 
         return loss_value
