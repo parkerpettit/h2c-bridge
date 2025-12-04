@@ -33,7 +33,7 @@ class H2CMMLUEvaluator(H2CBase):
         self.tok_sharer = tok_sharer
 
     @torch.no_grad()
-    def evaluate_baselines(self, dataloader, max_new_tokens=15, debug_mode=False):
+    def evaluate_baselines(self, dataloader, max_new_tokens=256, debug_mode=False):
         """Runs static baselines.
         
         Args:
@@ -61,7 +61,7 @@ class H2CMMLUEvaluator(H2CBase):
         return results
 
     @torch.no_grad()
-    def evaluate_baselines_detailed(self, dataloader, max_new_tokens=15, include_text_to_text=True, debug_mode=False):
+    def evaluate_baselines_detailed(self, dataloader, max_new_tokens=256, include_text_to_text=True, debug_mode=False):
         """Runs baselines with detailed logging.
         
         Args:
@@ -99,7 +99,7 @@ class H2CMMLUEvaluator(H2CBase):
         return results
 
     @torch.no_grad()
-    def evaluate_accuracy(self, dataloader, max_new_tokens=15, debug_mode=False):
+    def evaluate_accuracy(self, dataloader, max_new_tokens=256, debug_mode=False):
         """Evaluates bridge accuracy.
         
         Args:
@@ -114,7 +114,7 @@ class H2CMMLUEvaluator(H2CBase):
         return self._eval_loop(dataloader, mode="bridge", max_new_tokens=max_new_tokens, debug_mode=debug_mode)
 
     @torch.no_grad()
-    def evaluate_accuracy_detailed(self, dataloader, max_new_tokens=15, debug_mode=False):
+    def evaluate_accuracy_detailed(self, dataloader, max_new_tokens=256, debug_mode=False):
         """Evaluates bridge with detailed logging.
         
         Args:
@@ -414,8 +414,7 @@ class H2CMMLUEvaluator(H2CBase):
                     status = "wrong"
                     correct_symbol = "✗"
                 
-                # Truncate prompt to last 200 chars for table readability
-                prompt_preview = "..." + prompt.strip()[-200:] if len(prompt.strip()) > 200 else prompt.strip()
+                prompt_preview = prompt.strip()
                 
                 wandb_examples.append([
                     mode,  # mode
