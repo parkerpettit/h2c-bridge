@@ -242,6 +242,7 @@ class H2CMMLUEvaluator(H2CBase):
                     attention_mask=rec_mask,
                     max_new_tokens=max_new_tokens,
                     pad_token_id=self.tok_receiver.pad_token_id,
+                    eos_token_id=self.tok_receiver.eos_token_id,
                     do_sample=False
                 )
                 del modified_cache
@@ -257,7 +258,8 @@ class H2CMMLUEvaluator(H2CBase):
 
             outputs = self.receiver.generate(
                 input_ids=full_input, attention_mask=full_mask,
-                max_new_tokens=max_new_tokens, pad_token_id=self.tok_receiver.pad_token_id, do_sample=False
+                max_new_tokens=max_new_tokens, pad_token_id=self.tok_receiver.pad_token_id,
+                eos_token_id=self.tok_receiver.eos_token_id, do_sample=False
             )
             prompt_texts = self.tok_receiver.batch_decode(full_input, skip_special_tokens=False)
             gen_texts = self.tok_receiver.batch_decode(outputs[:, full_input.shape[1]:], skip_special_tokens=False)
@@ -267,7 +269,8 @@ class H2CMMLUEvaluator(H2CBase):
             # Sharer input is already full (padded) in the batch
             outputs = self.sharer.generate(
                 input_ids=sharer_ids, attention_mask=sharer_mask,
-                max_new_tokens=max_new_tokens, pad_token_id=self.tok_sharer.pad_token_id, do_sample=False
+                max_new_tokens=max_new_tokens, pad_token_id=self.tok_sharer.pad_token_id,
+                eos_token_id=self.tok_sharer.eos_token_id, do_sample=False
             )
             prompt_texts = self.tok_sharer.batch_decode(sharer_ids, skip_special_tokens=False)
             gen_texts = self.tok_sharer.batch_decode(outputs[:, sharer_ids.shape[1]:], skip_special_tokens=False)
@@ -293,7 +296,7 @@ class H2CMMLUEvaluator(H2CBase):
                 # But context in batch['raw_context'] is just the question + choices from MMLUDataset
                 # Let's just use the full context as the "question" for now to be safe
                 
-                s_prompt = f"In one clear sentence, describe the most essential background knowledge needed to answer the question: {clean_ctx} Do NOT directly solve or give answer to the question."
+                s_prompt = f"Give a hint that will help solve the answer for the following question: {clean_ctx} Do NOT under any circumstances say what the answer is. Be concise."
                 sharer_inputs_formatted.append([{"role": "user", "content": s_prompt}])
 
             s_encoded = self.tok_sharer.apply_chat_template(
@@ -301,7 +304,7 @@ class H2CMMLUEvaluator(H2CBase):
                 tokenize=True,
                 add_generation_prompt=True,
                 padding=True,
-                return_tensors="pt",
+                return_tensors="pt", 
                 return_dict=True
             )
             s_inputs = s_encoded["input_ids"].to(self.device)
@@ -312,13 +315,15 @@ class H2CMMLUEvaluator(H2CBase):
                 attention_mask=s_attn_mask,
                 max_new_tokens=48,
                 pad_token_id=self.tok_sharer.pad_token_id,
+                eos_token_id=self.tok_sharer.eos_token_id,
                 do_sample=False
             )
 
             # Decode only the new tokens (the hint)
+            # Use skip_special_tokens=True to avoid leaking <|eot_id|> etc. into Receiver prompt
             s_hints = self.tok_sharer.batch_decode(
                 s_out[:, s_inputs.shape[1]:],
-                skip_special_tokens=False
+                skip_special_tokens=True
             )
 
             # 3. Receiver Step (Context + Hint + Instruction)
@@ -363,6 +368,7 @@ class H2CMMLUEvaluator(H2CBase):
                 attention_mask=r_attn_mask,
                 max_new_tokens=max_new_tokens,
                 pad_token_id=self.tok_receiver.pad_token_id,
+                eos_token_id=self.tok_receiver.eos_token_id,
                 do_sample=False
             )
 
