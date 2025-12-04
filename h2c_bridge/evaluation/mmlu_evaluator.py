@@ -149,7 +149,7 @@ class H2CMMLUEvaluator(H2CBase):
         wandb_examples = [] if wandb_log_examples > 0 else None
 
         desc = f"Eval [{mode}]" + (" [DEBUG]" if debug_mode else "")
-        progress_bar = tqdm(dataloader, desc=desc, leave=False, mininterval=3.0)
+        progress_bar = tqdm(dataloader, desc=desc, leave=True, mininterval=1.0)
 
         for batch_idx, batch in enumerate(progress_bar):
             # 1. Measure Generation Time

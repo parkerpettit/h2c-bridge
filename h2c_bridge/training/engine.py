@@ -11,6 +11,7 @@ from transformers import get_cosine_schedule_with_warmup
 from h2c_bridge.training.trainer import H2CTrainer
 from h2c_bridge.evaluation.evaluator import H2CEvaluator
 from h2c_bridge.evaluation.mmlu_evaluator import H2CMMLUEvaluator
+from h2c_bridge.evaluation.baseline_perplexity import BaselinePerplexityEvaluator
 
 
 class H2CEngine:
@@ -115,6 +116,9 @@ class H2CEngine:
         )
         self.mmlu_evaluator = H2CMMLUEvaluator(
             self.sharer, self.receiver, self.bridge, self.factory.tok_receiver, self.factory.tok_sharer, self.config, device=self.factory.device
+        )
+        self.baseline_ppl_evaluator = BaselinePerplexityEvaluator(
+            self.sharer, self.receiver, self.factory.tok_sharer, self.factory.tok_receiver, device=self.factory.device
         )
 
     def run(self, epochs=3):
@@ -243,22 +247,49 @@ class H2CEngine:
 
         # 1. Standard Metrics
         val_loss = self.evaluator.evaluate_loss(self.val_loader)
-        mmlu_acc, mmlu_err, mmlu_lat = self.mmlu_evaluator.evaluate_accuracy(self.mmlu_loader)
+        val_perplexity = torch.exp(torch.tensor(val_loss)).item()  # Perplexity = exp(loss)
+        
+        # Use max_new_tokens=30 to allow natural EOS stopping while preventing runaway generation
+        mmlu_acc, mmlu_err, mmlu_lat = self.mmlu_evaluator.evaluate_accuracy(
+            self.mmlu_loader, max_new_tokens=30
+        )
 
         print(f"Validation/Loss: {val_loss:.4f}")
+        print(f"Validation/Perplexity: {val_perplexity:.2f}")
         print(f"MMLU Accuracy: {mmlu_acc:.2%}")
         print(f"MMLU Latency:  {mmlu_lat:.1f}ms")
+        
+        # 2. Baseline Perplexities (every 5 eval cycles to save compute)
+        baseline_ppls = {}
+        eval_count = self.global_step // self.eval_every
+        if eval_count % 5 == 0:  # Every 5000 steps (if eval_every=1000)
+            print("\n[Evaluating Baseline Perplexities...]")
+            baseline_results = self.baseline_ppl_evaluator.evaluate_all_baselines(self.val_loader)
+            baseline_ppls = {
+                "receiver_only_ppl": baseline_results['receiver_only']['perplexity'],
+                "sharer_only_ppl": baseline_results['sharer_only']['perplexity'],
+                "text_to_text_ppl": baseline_results['text_to_text']['perplexity'],
+            }
 
         # Log bridge gate values
         self._log_bridge_stats()
 
-        # 2. Calculate Deltas and Organize Logs
+        # 3. Calculate Deltas and Organize Logs
         logs = {
             "Validation/Loss": val_loss,
+            "Validation/Perplexity": val_perplexity,
             "MMLU/Accuracy": mmlu_acc,
             "MMLU/Error Rate": mmlu_err,
             "MMLU/Latency (s)": mmlu_lat,
         }
+        
+        # Add baseline perplexities if computed
+        if baseline_ppls:
+            logs.update({
+                "Baselines/Receiver-Only Perplexity": baseline_ppls["receiver_only_ppl"],
+                "Baselines/Sharer-Only Perplexity": baseline_ppls["sharer_only_ppl"],
+                "Baselines/Text-to-Text Perplexity": baseline_ppls["text_to_text_ppl"],
+            })
 
         if "BASELINES" in self.config:
             for name, stats in self.config["BASELINES"].items():
@@ -276,7 +307,7 @@ class H2CEngine:
 
         # 3. Log & Save
         wandb.log(logs)
-        self.evaluator.generate_demo("Explain quantum entanglement like I'm five.", max_new_tokens=50)
+        self.evaluator.generate_demo("Explain quantum entanglement like I'm five.", max_new_tokens=256)
         self._save_checkpoint(checkpoint_type="step", accuracy=mmlu_acc)
 
     def _save_checkpoint(self, checkpoint_type="step", accuracy=None):

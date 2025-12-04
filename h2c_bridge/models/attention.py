@@ -33,13 +33,13 @@ class H2CAttentionBlock(nn.Module):
             dtype=dtype,
         )
 
-        # Zero-init output projection for identity start
-        nn.init.normal_(self.attn.out_proj.weight, std=0.01)
+        # Use Kaiming initialization for output projection (better gradient flow)
+        nn.init.kaiming_normal_(self.attn.out_proj.weight, mode='fan_in', nonlinearity='relu')
         nn.init.zeros_(self.attn.out_proj.bias)
 
-        # Initialize gate near 0
-        init = 0.1 * torch.randn(1, dtype=dtype)
-        self.gate = nn.Parameter(init)
+        # Initialize gate to medium-high (logit=1.0 → sigmoid≈0.73) with small noise
+        # Noise breaks symmetry between layers while keeping mean contribution high
+        self.gate = nn.Parameter(torch.ones(1, dtype=dtype) * 1.0 + 0.01 * torch.randn(1, dtype=dtype))
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, receiver_state: Tensor, sharer_hidden: Tensor) -> Tensor:

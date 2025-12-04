@@ -44,11 +44,11 @@ class H2CDataModule:
             max_len=max_len
         )
 
-        # 2. MMLU auxiliary train dataset (5% mix)
-        #    We want MMLU to be ~5% of the total training data
-        #    OpenHermes is max_samples. So MMLU should be max_samples * 0.05
-        #    Use 5 samples per subject to get a reasonable mix across categories
-        mmlu_samples_per_subject = 5
+        # 2. MMLU auxiliary train dataset (~5% mix)
+        #    For 100k OpenHermes, 5% = ~5k MMLU samples
+        #    57 categories → ~90 samples per category gives us ~5,130 MMLU samples (5.1%)
+        #    This provides sufficient exposure to factual/reasoning patterns
+        mmlu_samples_per_subject = 90  # Increased from 5
         mmlu_aux_dataset = MMLUDataset(split="auxiliary_train", samples_per_subject=mmlu_samples_per_subject)
 
         # 3. Combine them for training/validation

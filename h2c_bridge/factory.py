@@ -111,6 +111,7 @@ class H2CModelFactory:
             receiver_num_heads=r_dims["kv_heads"],  # Uses KV heads for GQA compatibility
             num_receiver_layers=r_dims["num_layers"],
             sharer_num_layers=s_dims["num_layers"],
+            proj_num_heads=16,  # Increased from 4 for more expressive attention (56 dim/head)
             dtype=self.dtype
         ).to(self.device)
         
