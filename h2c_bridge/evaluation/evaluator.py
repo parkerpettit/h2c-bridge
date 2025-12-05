@@ -1,5 +1,7 @@
 """OpenHermes evaluation."""
 
+import gc
+
 import torch
 from tqdm.auto import tqdm
 
@@ -43,62 +45,69 @@ class H2CEvaluator(H2CBase):
         progress_bar = tqdm(dataloader, desc="Validation Loop", leave=False)
 
         for batch in progress_bar:
-            # 1. Unpack
-            sharer_ids = batch['sharer_input_ids'].to(self.device)
-            sharer_mask = batch['sharer_mask'].to(self.device)
-            rec_prompt_ids = batch['receiver_prompt_ids'].to(self.device)
-            rec_prompt_mask = batch['receiver_prompt_mask'].to(self.device)
-            rec_kickstart_ids = batch['receiver_kickstart_ids'].to(self.device)
-            rec_target_ids = batch['receiver_target_ids'].to(self.device)
-            rec_target_mask = batch['receiver_target_mask'].to(self.device)
+            try:
+                # 1. Unpack
+                sharer_ids = batch['sharer_input_ids'].to(self.device)
+                sharer_mask = batch['sharer_mask'].to(self.device)
+                rec_prompt_ids = batch['receiver_prompt_ids'].to(self.device)
+                rec_prompt_mask = batch['receiver_prompt_mask'].to(self.device)
+                rec_kickstart_ids = batch['receiver_kickstart_ids'].to(self.device)
+                rec_target_ids = batch['receiver_target_ids'].to(self.device)
+                rec_target_mask = batch['receiver_target_mask'].to(self.device)
 
-            # Use autocast to match training dtype
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                modified_cache = self.get_bridged_cache(sharer_ids, sharer_mask, rec_prompt_ids, rec_prompt_mask)
-                del sharer_ids, sharer_mask, rec_prompt_ids, rec_prompt_mask
+                # Use autocast to match training dtype
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    modified_cache = self.get_bridged_cache(sharer_ids, sharer_mask, rec_prompt_ids, rec_prompt_mask)
+                    del sharer_ids, sharer_mask, rec_prompt_ids, rec_prompt_mask
 
-                combined_input = torch.cat([rec_kickstart_ids, rec_target_ids], dim=1)
-                combined_mask = torch.cat([torch.ones_like(rec_kickstart_ids), rec_target_mask], dim=1)
+                    combined_input = torch.cat([rec_kickstart_ids, rec_target_ids], dim=1)
+                    combined_mask = torch.cat([torch.ones_like(rec_kickstart_ids), rec_target_mask], dim=1)
 
-                # Shape Assertions
-                assert modified_cache is not None
-                assert len(modified_cache) > 0
+                    # Shape Assertions
+                    assert modified_cache is not None
+                    assert len(modified_cache) > 0
 
-                # Build full attention mask including cache positions
-                cache_len = modified_cache[0][0].shape[2]
-                batch_size = combined_input.shape[0]
+                    # Build full attention mask including cache positions
+                    cache_len = modified_cache[0][0].shape[2]
+                    batch_size = combined_input.shape[0]
 
-                # Assertions
-                assert combined_input.shape[0] == batch_size
-                assert combined_mask.shape[0] == batch_size
+                    # Assertions
+                    assert combined_input.shape[0] == batch_size
+                    assert combined_mask.shape[0] == batch_size
 
-                cache_mask = torch.ones(batch_size, cache_len, device=self.device, dtype=combined_mask.dtype)
-                full_attention_mask = torch.cat([cache_mask, combined_mask], dim=1)
+                    cache_mask = torch.ones(batch_size, cache_len, device=self.device, dtype=combined_mask.dtype)
+                    full_attention_mask = torch.cat([cache_mask, combined_mask], dim=1)
 
-                # Create labels: -100 for kickstart (ignore), actual tokens for targets
-                # Build target labels with padding masked first
-                target_labels = rec_target_ids.clone()
-                target_labels[rec_target_mask == 0] = -100  # Mask padding in targets
+                    # Create labels: -100 for kickstart (ignore), actual tokens for targets
+                    # Build target labels with padding masked first
+                    target_labels = rec_target_ids.clone()
+                    target_labels[rec_target_mask == 0] = -100  # Mask padding in targets
 
-                # Concatenate kickstart (-100) with masked target labels
-                labels = torch.cat([
-                    torch.full_like(rec_kickstart_ids, -100),  # Ignore kickstart in loss
-                    target_labels  # Target tokens with padding already masked
-                ], dim=1)
+                    # Concatenate kickstart (-100) with masked target labels
+                    labels = torch.cat([
+                        torch.full_like(rec_kickstart_ids, -100),  # Ignore kickstart in loss
+                        target_labels  # Target tokens with padding already masked
+                    ], dim=1)
 
-                del rec_kickstart_ids, rec_target_ids, rec_target_mask
+                    del rec_kickstart_ids, rec_target_ids, rec_target_mask
 
-                outputs = self.receiver(
-                    input_ids=combined_input,
-                    past_key_values=modified_cache,
-                    attention_mask=full_attention_mask,
-                    labels=labels
-                )
-                del combined_input, combined_mask, full_attention_mask, labels, modified_cache
+                    outputs = self.receiver(
+                        input_ids=combined_input,
+                        past_key_values=modified_cache,
+                        attention_mask=full_attention_mask,
+                        labels=labels
+                    )
+                    del combined_input, combined_mask, full_attention_mask, labels, modified_cache
 
-            total_loss += outputs.loss.item()
-            del outputs
-            num_batches += 1
+                total_loss += outputs.loss.item()
+                del outputs
+                num_batches += 1
+
+            except torch.cuda.OutOfMemoryError:
+                print(f"\n[WARNING] OOM during validation, skipping batch...")
+                torch.cuda.empty_cache()
+                gc.collect()
+                continue
 
         # Cleanup after eval loop
         torch.cuda.empty_cache()

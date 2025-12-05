@@ -1,5 +1,6 @@
 """MMLU evaluation."""
 
+import gc
 import re
 import time
 
@@ -155,36 +156,40 @@ class H2CMMLUEvaluator(H2CBase):
         progress_bar = tqdm(dataloader, desc=desc, leave=True, mininterval=1.0)
 
         for batch_idx, batch in enumerate(progress_bar):
-            # 1. Measure Generation Time
-            start_time = time.time()
-            prompt_texts, gen_texts, labels = self._generate_batch(batch, mode, max_new_tokens)
-            end_time = time.time()
+            try:
+                # 1. Measure Generation Time
+                start_time = time.time()
+                prompt_texts, gen_texts, labels = self._generate_batch(batch, mode, max_new_tokens)
+                end_time = time.time()
 
-            # Get subjects if available (for detailed analysis)
-            subjects = batch.get('subjects', ['unknown'] * len(labels))
+                # Get subjects if available (for detailed analysis)
+                subjects = batch.get('subjects', ['unknown'] * len(labels))
 
-            # Update Time Stats
-            stats["total_time"] += (end_time - start_time)
+                # Update Time Stats
+                stats["total_time"] += (end_time - start_time)
 
-            # 2. Score & Log
-            batch_details = self._score_batch(
-                prompt_texts, gen_texts, labels, stats, subjects, 
-                collect_details=collect_details,
-                wandb_examples=wandb_examples,
-                wandb_max=wandb_log_examples,
-                mode=mode
-            )
-            if collect_details and batch_details:
-                detailed_results.extend(batch_details)
+                # 2. Score & Log
+                batch_details = self._score_batch(
+                    prompt_texts, gen_texts, labels, stats, subjects, 
+                    collect_details=collect_details,
+                    wandb_examples=wandb_examples,
+                    wandb_max=wandb_log_examples,
+                    mode=mode
+                )
+                if collect_details and batch_details:
+                    detailed_results.extend(batch_details)
 
-            # 3. Debug Mode Early Exit
-            if debug_mode and stats["total"] >= 25:
-                print(f"\n[DEBUG MODE] Stopping early after {stats['total']} samples")
-                break
+                # 3. Debug Mode Early Exit
+                if debug_mode and stats["total"] >= 25:
+                    print(f"\n[DEBUG MODE] Stopping early after {stats['total']} samples")
+                    break
 
-            # Periodic memory cleanup (every 10 batches)
-            if batch_idx % 10 == 0:
+
+            except torch.cuda.OutOfMemoryError:
+                print(f"\n[WARNING] OOM during {mode} evaluation, skipping batch...")
                 torch.cuda.empty_cache()
+                gc.collect()
+                continue
 
         # Calculate Metrics
         total = stats["total"] if stats["total"] > 0 else 1
