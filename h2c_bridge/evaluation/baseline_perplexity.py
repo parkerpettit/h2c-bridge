@@ -85,10 +85,10 @@ class BaselinePerplexityEvaluator:
     
     @torch.no_grad()
     def evaluate_sharer_only_loss(self, dataloader):
-        """Evaluate sharer-only loss on TARGET generation.
+        """Evaluate sharer-only loss.
         
-        Measures how well the sharer predicts the target response given the prompt.
-        This is a fair comparison to receiver-only.
+        Properly tokenizes prompt+target with sharer tokenizer and measures
+        loss on target tokens only. Fair comparison to receiver-only.
         
         Args:
             dataloader: Validation dataloader (OpenHermes val set)
@@ -103,46 +103,46 @@ class BaselinePerplexityEvaluator:
         progress_bar = tqdm(dataloader, desc="Sharer-Only Perplexity", leave=False)
         
         for batch in progress_bar:
-            # Get raw prompts and targets from batch
+            # Get raw text from batch
             raw_prompts = batch.get('raw_context', None)
             if raw_prompts is None:
-                # Fall back to decoding receiver prompt
+                # Decode from receiver tokens if not available
                 raw_prompts = self.tok_receiver.batch_decode(
                     batch['receiver_prompt_ids'], skip_special_tokens=True
                 )
             
-            # Get raw targets
+            # Get raw targets - decode from receiver target tokens
             raw_targets = self.tok_receiver.batch_decode(
                 batch['receiver_target_ids'], skip_special_tokens=True
             )
             
-            # Format for sharer: prompt -> target
-            sharer_inputs_formatted = []
+            # Tokenize with SHARER tokenizer: full conversation (prompt + target)
+            full_conversations = []
             for prompt, target in zip(raw_prompts, raw_targets):
-                sharer_inputs_formatted.append([
+                full_conversations.append([
                     {"role": "user", "content": prompt.strip()},
                     {"role": "assistant", "content": target.strip()}
                 ])
             
-            # Tokenize full conversation (prompt + target)
-            encoded = self.tok_sharer.apply_chat_template(
-                sharer_inputs_formatted,
+            # Tokenize full conversation
+            full_encoded = self.tok_sharer.apply_chat_template(
+                full_conversations,
                 tokenize=True,
-                add_generation_prompt=False,  # Include assistant response
+                add_generation_prompt=False,
                 padding=True,
                 return_tensors="pt",
                 return_dict=True
             )
-            input_ids = encoded["input_ids"].to(self.device)
-            attention_mask = encoded["attention_mask"].to(self.device)
+            input_ids = full_encoded["input_ids"].to(self.device)
+            attention_mask = full_encoded["attention_mask"].to(self.device)
             
-            # Get prompt-only length to know where targets start
-            prompt_only_formatted = []
+            # Tokenize prompt-only to get prompt length
+            prompt_only = []
             for prompt in raw_prompts:
-                prompt_only_formatted.append([{"role": "user", "content": prompt.strip()}])
+                prompt_only.append([{"role": "user", "content": prompt.strip()}])
             
             prompt_encoded = self.tok_sharer.apply_chat_template(
-                prompt_only_formatted,
+                prompt_only,
                 tokenize=True,
                 add_generation_prompt=True,
                 padding=True,
@@ -153,8 +153,8 @@ class BaselinePerplexityEvaluator:
             
             # Create labels: -100 for prompt, actual tokens for target
             labels = input_ids.clone()
-            labels[:, :prompt_len] = -100  # Ignore prompt tokens
-            labels[attention_mask == 0] = -100  # Ignore padding
+            labels[:, :prompt_len] = -100
+            labels[attention_mask == 0] = -100
             
             outputs = self.sharer(
                 input_ids=input_ids,
