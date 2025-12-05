@@ -282,9 +282,9 @@ class H2CEngine:
         val_loss = self.evaluator.evaluate_loss(self.val_loader)
         val_perplexity = torch.exp(torch.tensor(val_loss)).item()  # Perplexity = exp(loss)
         
-        # Use max_new_tokens=30 to allow natural EOS stopping while preventing runaway generation
+        # Use max_new_tokens=256 to match baseline evaluations for fair latency comparison
         mmlu_acc, mmlu_err, mmlu_lat = self.mmlu_evaluator.evaluate_accuracy(
-            self.mmlu_loader, max_new_tokens=30, step=self.global_step
+            self.mmlu_loader, max_new_tokens=256, step=self.global_step
         )
 
         print(f"Validation/Loss: {val_loss:.4f}")
