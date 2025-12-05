@@ -292,10 +292,10 @@ class H2CEngine:
         print(f"MMLU Latency:  {mmlu_lat:.1f}ms")
         
         # 2. Baseline Perplexities - use cached values from config (they never change)
+        # Note: sharer PPL not included - different tokenizer makes comparison unfair
         baselines = self.config.get("BASELINES", {})
         baseline_ppls = {
             "receiver_only_ppl": baselines.get("receiver_only", {}).get("ppl", 2.69),
-            "sharer_only_ppl": baselines.get("sharer_only", {}).get("ppl", 21.15),
             "text_to_text_ppl": baselines.get("text_to_text", {}).get("ppl", 2.72),
         }
 

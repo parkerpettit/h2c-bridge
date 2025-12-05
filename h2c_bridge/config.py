@@ -61,9 +61,8 @@ def get_default_config():
             "sharer_only": {
                 "acc": 0.6872420262664165,
                 "err": 0.00075046904315197,
-                "latency_ms": 0.08787205532388884,
-                "ppl": 21.15,  # Note: This measures sharer predicting its own input, not targets
-                "loss": 3.0516
+                "latency_ms": 0.08787205532388884
+                # No PPL - different tokenizer makes comparison unfair
             },
             "text_to_text": {
                 "acc": 0.38574108818011255,

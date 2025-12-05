@@ -289,7 +289,10 @@ class BaselinePerplexityEvaluator:
         return {"loss": avg_loss, "perplexity": perplexity}
     
     def evaluate_all_baselines(self, dataloader):
-        """Evaluate all baseline perplexities.
+        """Evaluate baseline perplexities (receiver-based only).
+        
+        Note: Sharer PPL is not included because different tokenizers make
+        perplexity comparison unfair. Use MMLU accuracy for sharer comparison.
         
         Args:
             dataloader: Validation dataloader (OpenHermes val set)
@@ -306,12 +309,7 @@ class BaselinePerplexityEvaluator:
         results['receiver_only'] = rec_results
         print(f"Receiver-Only: Loss={rec_results['loss']:.4f}, PPL={rec_results['perplexity']:.2f}")
         
-        # Sharer-only
-        sharer_results = self.evaluate_sharer_only_loss(dataloader)
-        results['sharer_only'] = sharer_results
-        print(f"Sharer-Only: Loss={sharer_results['loss']:.4f}, PPL={sharer_results['perplexity']:.2f}")
-        
-        # Text-to-text (sharer hint → receiver)
+        # Text-to-text (sharer hint → receiver) - uses receiver tokenizer, fair comparison
         t2t_results = self.evaluate_text_to_text_loss(dataloader)
         results['text_to_text'] = t2t_results
         print(f"Text-to-Text: Loss={t2t_results['loss']:.4f}, PPL={t2t_results['perplexity']:.2f}")
