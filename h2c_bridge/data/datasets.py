@@ -155,17 +155,13 @@ class MMLUDataset(Dataset):
             context = "Question: " + q + "\n"
             for i, choice in enumerate(choices):
                 context += f"{'ABCD'[i]}) {choice}\n"
-
+            
             instruction = (
-                "\nInstructions:\n"
                 "Carefully read the question and all options.\n"
-                "Select the single most correct answer.\n"
-                "Respond ONLY in the following format: 'The correct answer is A/B/C/D'.\n"
-                "Do not include any explanations, additional text, or punctuation besides the answer.\n"
-                "The correct answer is"
+                "Respond with only the letter of the correct answer (A, B, C, or D)."
             )
 
-            full_prompt = "Accurately answer the following question:\n" + context + instruction
+            full_prompt = instruction + "\n" + context
 
             self.data.append({
                 "prompt": full_prompt,

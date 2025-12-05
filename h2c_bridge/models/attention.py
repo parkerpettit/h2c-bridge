@@ -37,10 +37,6 @@ class H2CAttentionBlock(nn.Module):
             dtype=dtype,
         )
 
-        # # Use Kaiming initialization for output projection
-        # nn.init.kaiming_normal_(self.attn.out_proj.weight, mode='fan_in', nonlinearity='relu')
-        # nn.init.zeros_(self.attn.out_proj.bias)
-
         # FFN: 2-layer MLP with GELU activation
         ffn_hidden = receiver_dim * ffn_expansion
         self.norm_ffn = nn.LayerNorm(receiver_dim, dtype=dtype)
@@ -51,10 +47,6 @@ class H2CAttentionBlock(nn.Module):
             nn.Linear(ffn_hidden, receiver_dim, dtype=dtype),
             nn.Dropout(dropout),
         )
-        
-        # # Initialize FFN output layer to small values for stable training
-        # nn.init.normal_(self.ffn[-2].weight, std=0.01)
-        # nn.init.zeros_(self.ffn[-2].bias)
 
         # Single gate controls overall block contribution
         self.gate = nn.Parameter(torch.ones(1, dtype=dtype) * 1.0 + 0.01 * torch.randn(1, dtype=dtype))

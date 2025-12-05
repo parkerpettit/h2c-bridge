@@ -340,16 +340,12 @@ class H2CMMLUEvaluator(H2CBase):
                 # If raw_instruction is empty (e.g. not split correctly), we fallback
                 if not instr:
                      instr = (
-                        "\nInstructions:\n"
                         "Carefully read the question and all options.\n"
-                        "Select the single most correct answer.\n"
-                        "Respond ONLY in the following format: ”The correct answer is A/B/C/D”.\n"
-                        "Do not include any explanations, additional text, or punctuation besides the answer.\n"
-                        "The correct answer is"
+                        "Respond with only the letter of the correct answer (A, B, C, or D)."
                     )
 
-                # Inject hint
-                final_content = f"Accurately answer the following question:\n{ctx}\n[Hint: {clean_hint}]\n{instr}"
+                # Inject hint - instruction first, then context with hint
+                final_content = f"{instr}\n{ctx}\n[Hint: {clean_hint}]"
                 receiver_inputs_formatted.append([{"role": "user", "content": final_content}])
 
             r_encoded = self.tok_receiver.apply_chat_template(

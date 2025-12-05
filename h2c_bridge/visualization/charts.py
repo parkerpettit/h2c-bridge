@@ -424,7 +424,7 @@ def log_probability_shift(engine, prompt_text, true_label="A"):
     apply_theme()
 
     # --- Compute probabilities ---
-    full_prompt = f"{prompt_text}\nSelect the correct answer. Output ONLY the answer letter (A, B, C, or D). Answer:"
+    full_prompt = f"Carefully read the question and all options.\nRespond with only the letter of the correct answer (A, B, C, or D).\n{prompt_text}"
     tok = engine.factory.tok_receiver
     sharer_tok = engine.factory.tok_sharer
     candidates = ["A", "B", "C", "D"]

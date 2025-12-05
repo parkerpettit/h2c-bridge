@@ -210,7 +210,7 @@ class BaselinePerplexityEvaluator:
             # 2. Sharer generates hints
             sharer_inputs_formatted = []
             for prompt in raw_prompts:
-                s_prompt = f"Give a concise hint to help answer: {prompt.strip()} Do NOT give the answer directly."
+                s_prompt = f"Give a hint that will help solve the answer for the following question: {prompt.strip()} Do NOT under any circumstances say what the answer is. Be concise."
                 sharer_inputs_formatted.append([{"role": "user", "content": s_prompt}])
             
             s_encoded = self.tok_sharer.apply_chat_template(

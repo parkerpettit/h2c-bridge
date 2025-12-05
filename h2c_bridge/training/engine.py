@@ -315,7 +315,6 @@ class H2CEngine:
         if baseline_ppls:
             logs.update({
                 "Baselines/Receiver-Only Perplexity": baseline_ppls["receiver_only_ppl"],
-                "Baselines/Sharer-Only Perplexity": baseline_ppls["sharer_only_ppl"],
                 "Baselines/Text-to-Text Perplexity": baseline_ppls["text_to_text_ppl"],
             })
 
