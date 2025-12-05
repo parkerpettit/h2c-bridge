@@ -230,8 +230,9 @@ class H2CMMLUEvaluator(H2CBase):
         # Standard Tensors
         sharer_ids = batch['sharer_input_ids'].to(self.device)
         sharer_mask = batch['sharer_mask'].to(self.device)
-        rec_full_ids = batch['receiver_prompt_ids'].to(self.device)
+        rec_full_ids = batch['receiver_prompt_ids'].to(self.device)  # N-1 tokens
         rec_mask = batch['receiver_prompt_mask'].to(self.device)
+        rec_kickstart = batch['receiver_kickstart_ids'].to(self.device)  # 1 token
 
         prompt_texts = []
         gen_texts = []
@@ -239,22 +240,26 @@ class H2CMMLUEvaluator(H2CBase):
         if mode == "bridge":
             # Bridge Logic (Standard) - use autocast to match training dtype
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                # receiver_prompt_ids is already N-1 tokens (stripped in collator)
-                # Pass directly to match training - do NOT slice again
+                # Build cache from receiver_prompt_ids (N-1 tokens) - matches training
                 modified_cache = self.get_bridged_cache(sharer_ids, sharer_mask, rec_full_ids, rec_mask)
 
+                # For generate(), pass N tokens (prompt + kickstart) so there's 1 new token to process
+                # This avoids empty cache_position edge case in HuggingFace
+                full_input_ids = torch.cat([rec_full_ids, rec_kickstart], dim=1)
+                full_mask = torch.cat([rec_mask, torch.ones_like(rec_kickstart)], dim=1)
+
                 outputs = self.receiver.generate(
-                    input_ids=rec_full_ids,  # Pass FULL input (model handles cache internally)
+                    input_ids=full_input_ids,  # N tokens (cache has N-1)
                     past_key_values=modified_cache,
-                    attention_mask=rec_mask,
+                    attention_mask=full_mask,
                     max_new_tokens=max_new_tokens,
                     pad_token_id=self.tok_receiver.pad_token_id,
                     eos_token_id=self.tok_receiver.eos_token_id,
                     do_sample=False
                 )
                 del modified_cache
-            prompt_texts = self.tok_receiver.batch_decode(rec_full_ids, skip_special_tokens=False)
-            gen_texts = self.tok_receiver.batch_decode(outputs[:, rec_full_ids.shape[1]:], skip_special_tokens=False)
+            prompt_texts = self.tok_receiver.batch_decode(full_input_ids, skip_special_tokens=False)
+            gen_texts = self.tok_receiver.batch_decode(outputs[:, full_input_ids.shape[1]:], skip_special_tokens=False)
             del outputs
 
         elif mode == "receiver_only":
