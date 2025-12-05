@@ -94,7 +94,7 @@ def run_all_visualizations(engine, config, themes=("dark", "light"), include_bas
             engine.mmlu_loader
         )
         eval_cache = {'acc': h2c_acc, 'err': h2c_err, 'lat': h2c_lat}
-        print(f"[Viz] H2C Bridge: Accuracy={h2c_acc:.2%}, Latency={h2c_lat:.3f}s")
+        print(f"[Viz] H2C Bridge: Accuracy={h2c_acc:.2%}, Latency={h2c_lat:.4f}s")
     except Exception as e:
         print(f"[Viz] Warning: Detailed evaluation failed ({e}), falling back to basic eval")
         h2c_acc, h2c_err, h2c_lat = engine.mmlu_evaluator.evaluate_accuracy(engine.mmlu_loader)

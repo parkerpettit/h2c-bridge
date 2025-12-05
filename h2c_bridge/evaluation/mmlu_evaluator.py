@@ -56,7 +56,7 @@ class H2CMMLUEvaluator(H2CBase):
         for mode in modes:
             print(f"--- Running Baseline: {mode} ---")
             acc, err, lat = self._eval_loop(dataloader, mode=mode, max_new_tokens=max_new_tokens, debug_mode=debug_mode)
-            results[mode] = {"acc": acc, "err": err, "latency_ms": lat}
+            results[mode] = {"acc": acc, "err": err, "latency_s": lat}
 
         return results
 
@@ -92,43 +92,45 @@ class H2CMMLUEvaluator(H2CBase):
             results[mode] = {
                 "acc": acc,
                 "err": err,
-                "latency_ms": lat,
+                "latency_s": lat,
                 "details": details
             }
 
         return results
 
     @torch.no_grad()
-    def evaluate_accuracy(self, dataloader, max_new_tokens=256, debug_mode=False):
+    def evaluate_accuracy(self, dataloader, max_new_tokens=256, debug_mode=False, step=None):
         """Evaluates bridge accuracy.
         
         Args:
             dataloader: MMLU dataloader
             max_new_tokens: Max tokens to generate
             debug_mode: If True, stop after 5 samples for quick testing
+            step: Current training step (for WandB logging)
             
         Returns:
-            (accuracy, error_rate, latency_ms)
+            (accuracy, error_rate, latency_s)
         """
         self.bridge.eval()
-        return self._eval_loop(dataloader, mode="bridge", max_new_tokens=max_new_tokens, debug_mode=debug_mode)
+        return self._eval_loop(dataloader, mode="bridge", max_new_tokens=max_new_tokens, debug_mode=debug_mode, step=step)
 
     @torch.no_grad()
-    def evaluate_accuracy_detailed(self, dataloader, max_new_tokens=256, debug_mode=False):
+    def evaluate_accuracy_detailed(self, dataloader, max_new_tokens=256, debug_mode=False, step=None):
         """Evaluates bridge with detailed logging.
         
         Args:
             dataloader: MMLU dataloader
             max_new_tokens: Max tokens to generate
             debug_mode: If True, stop after 25 samples for quick testing
+            step: Current training step (for WandB logging)
             
         Returns:
             (accuracy, error_rate, latency, detailed_results)
         """
         self.bridge.eval()
-        return self._eval_loop(dataloader, mode="bridge", max_new_tokens=max_new_tokens, collect_details=True, debug_mode=debug_mode)
+        return self._eval_loop(dataloader, mode="bridge", max_new_tokens=max_new_tokens, collect_details=True, debug_mode=debug_mode, step=step)
 
-    def _eval_loop(self, dataloader, mode, max_new_tokens, collect_details=False, debug_mode=False):
+    def _eval_loop(self, dataloader, mode, max_new_tokens, collect_details=False, debug_mode=False, step=None):
         """Main evaluation loop.
         
         Args:
@@ -137,9 +139,10 @@ class H2CMMLUEvaluator(H2CBase):
             max_new_tokens: Maximum tokens to generate
             collect_details: If True, collect detailed results for each sample
             debug_mode: If True, stop after 25 samples for quick testing
+            step: Current training step (for WandB logging)
             
         Returns:
-            Tuple of (accuracy, error_rate, latency_ms) or (accuracy, error_rate, latency_ms, detailed_results) if collect_details=True
+            Tuple of (accuracy, error_rate, latency_s) or (accuracy, error_rate, latency_s, detailed_results) if collect_details=True
         """
         stats = {"correct": 0, "total": 0, "format_errors": 0, "total_time": 0.0}
         detailed_results = [] if collect_details else None
@@ -187,9 +190,9 @@ class H2CMMLUEvaluator(H2CBase):
         total = stats["total"] if stats["total"] > 0 else 1
         accuracy = stats["correct"] / total
         error_rate = stats["format_errors"] / total
-        avg_latency_ms = (stats["total_time"] / total)
+        avg_latency_s = (stats["total_time"] / total)
 
-        print(f"[{mode}] Acc: {accuracy:.2%} | Err: {error_rate:.2%} | Latency: {avg_latency_ms:.1f}ms")
+        print(f"[{mode}] Acc: {accuracy:.2%} | Err: {error_rate:.2%} | Latency: {avg_latency_s:.4f}s")
 
         # Log examples to WandB
         if wandb_examples and len(wandb_examples) > 0:
@@ -197,15 +200,16 @@ class H2CMMLUEvaluator(H2CBase):
                 columns=["mode", "subject", "prompt_preview", "response", "prediction", "label", "correct", "status"],
                 data=wandb_examples
             )
-            wandb.log({f"eval_examples/{mode}": table})
-            print(f"[WandB] Logged {len(wandb_examples)} examples to eval_examples/{mode}")
+            step_suffix = f"_step{step}" if step is not None else ""
+            wandb.log({f"eval_examples/{mode}{step_suffix}": table})
+            print(f"[WandB] Logged {len(wandb_examples)} examples to eval_examples/{mode}{step_suffix}")
 
         if mode == "bridge":
             self.bridge.train()
 
         if collect_details:
-            return accuracy, error_rate, avg_latency_ms, detailed_results
-        return accuracy, error_rate, avg_latency_ms
+            return accuracy, error_rate, avg_latency_s, detailed_results
+        return accuracy, error_rate, avg_latency_s
 
     def _generate_batch(self, batch, mode, max_new_tokens):
         """Generate outputs for a batch using the specified mode.
@@ -230,11 +234,9 @@ class H2CMMLUEvaluator(H2CBase):
         if mode == "bridge":
             # Bridge Logic (Standard) - use autocast to match training dtype
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                # Create cache from all but last token
-                rec_context = rec_full_ids[:, :-1]
-                rec_context_mask = rec_mask[:, :-1]  # Slice mask to match context
-                modified_cache = self.get_bridged_cache(sharer_ids, sharer_mask, rec_context, rec_context_mask)
-                del rec_context, rec_context_mask
+                # receiver_prompt_ids is already N-1 tokens (stripped in collator)
+                # Pass directly to match training - do NOT slice again
+                modified_cache = self.get_bridged_cache(sharer_ids, sharer_mask, rec_full_ids, rec_mask)
 
                 outputs = self.receiver.generate(
                     input_ids=rec_full_ids,  # Pass FULL input (model handles cache internally)
@@ -313,7 +315,7 @@ class H2CMMLUEvaluator(H2CBase):
             s_out = self.sharer.generate(
                 s_inputs,
                 attention_mask=s_attn_mask,
-                max_new_tokens=48,
+                max_new_tokens=max_new_tokens,  # Use same as other baselines for fair comparison
                 pad_token_id=self.tok_sharer.pad_token_id,
                 eos_token_id=self.tok_sharer.eos_token_id,
                 do_sample=False

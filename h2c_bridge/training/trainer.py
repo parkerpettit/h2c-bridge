@@ -129,8 +129,8 @@ class H2CTrainer(H2CBase):
                 pre_clip_norm += p.grad.data.norm(2).item() ** 2
         pre_clip_norm = pre_clip_norm ** 0.5
         
-        # Clip to 500.0
-        grad_norm = torch.nn.utils.clip_grad_norm_(self.bridge.parameters(), 500.0)
+        # Clip to 10.0 (reduced from 500 to prevent gradient explosion instability)
+        grad_norm = torch.nn.utils.clip_grad_norm_(self.bridge.parameters(), 10.0)
 
         # Log metrics (need .item() before deleting)
         loss_value = loss.item()

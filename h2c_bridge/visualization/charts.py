@@ -43,9 +43,7 @@ def log_performance_charts(engine, config, eval_cache=None, baseline_results=Non
     if baseline_results:
         for name, metrics in baseline_results.items():
             clean_name = name.replace("_", " ").title()
-            lat = metrics.get("latency_ms", 0)
-            if lat > 10:  # Assume ms if > 10
-                lat = lat / 1000.0
+            lat = metrics.get("latency_s", 0)
             data.append({
                 "Method": clean_name,
                 "Accuracy": metrics["acc"],
@@ -56,9 +54,7 @@ def log_performance_charts(engine, config, eval_cache=None, baseline_results=Non
         # Fallback to config baselines
         for name, metrics in config.get("BASELINES", {}).items():
             clean_name = name.replace("_", " ").title()
-            lat = metrics.get("latency_sec", metrics.get("latency_ms", 0))
-            if lat > 10:  # Assume ms if > 10
-                lat = lat / 1000.0
+            lat = metrics.get("latency_s", 0)
             data.append({
                 "Method": clean_name,
                 "Accuracy": metrics["acc"],
@@ -708,7 +704,7 @@ def log_training_summary(engine, config, eval_cache=None, baseline_results=None)
 
     # Prefer freshly calculated baseline_results over config["BASELINES"]
     if baseline_results:
-        baselines = {name: {"acc": v["acc"], "latency_ms": v["latency_ms"]}
+        baselines = {name: {"acc": v["acc"], "latency_s": v["latency_s"]}
                      for name, v in baseline_results.items()}
     else:
         baselines = config.get("BASELINES", {})
@@ -766,9 +762,7 @@ def log_training_summary(engine, config, eval_cache=None, baseline_results=None)
     methods = ["H2C Bridge"] + [k.replace("_", " ").title() for k in baselines.keys()]
     latencies = [h2c_lat]
     for v in baselines.values():
-        lat = v.get("latency_ms", v.get("latency_sec", 0))
-        if lat > 10:
-            lat = lat / 1000
+        lat = v.get("latency_s", 0)
         latencies.append(lat)
 
     colors = [Theme.ACCENT_PRIMARY] + [Theme.TEXT_MUTED] * len(baselines)

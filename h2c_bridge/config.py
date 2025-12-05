@@ -54,20 +54,20 @@ def get_default_config():
             "receiver_only": {
                 "acc": 0.3590994371482176,
                 "err": 0.013696060037523453,
-                "latency_ms": 0.022912156872633028,
+                "latency_s": 0.022912156872633028,
                 "ppl": 2.69,
                 "loss": 0.9911
             },
             "sharer_only": {
                 "acc": 0.6872420262664165,
                 "err": 0.00075046904315197,
-                "latency_ms": 0.08787205532388884
+                "latency_s": 0.08787205532388884
                 # No PPL - different tokenizer makes comparison unfair
             },
             "text_to_text": {
                 "acc": 0.38574108818011255,
                 "err": 0.0031894934333958724,
-                "latency_ms": 0.8592565691269808,
+                "latency_s": 0.8592565691269808,
                 "ppl": 2.72,
                 "loss": 1.0015
             }

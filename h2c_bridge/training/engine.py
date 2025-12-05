@@ -1,6 +1,7 @@
 """Training engine."""
 
 import os
+import gc
 
 import torch
 import torch.optim as optim
@@ -283,13 +284,13 @@ class H2CEngine:
         
         # Use max_new_tokens=30 to allow natural EOS stopping while preventing runaway generation
         mmlu_acc, mmlu_err, mmlu_lat = self.mmlu_evaluator.evaluate_accuracy(
-            self.mmlu_loader, max_new_tokens=30
+            self.mmlu_loader, max_new_tokens=30, step=self.global_step
         )
 
         print(f"Validation/Loss: {val_loss:.4f}")
         print(f"Validation/Perplexity: {val_perplexity:.2f}")
         print(f"MMLU Accuracy: {mmlu_acc:.2%}")
-        print(f"MMLU Latency:  {mmlu_lat:.1f}ms")
+        print(f"MMLU Latency:  {mmlu_lat:.4f}s")
         
         # 2. Baseline Perplexities - use cached values from config (they never change)
         # Note: sharer PPL not included - different tokenizer makes comparison unfair
@@ -327,10 +328,10 @@ class H2CEngine:
                 logs[f"Deltas/Accuracy Delta vs {clean_name}"] = acc_delta
 
                 # Latency Delta
-                lat_delta = mmlu_lat - stats["latency_ms"]
+                lat_delta = mmlu_lat - stats["latency_s"]
                 logs[f"Deltas/Latency Delta (s) vs {clean_name}"] = lat_delta
 
-                print(f"vs {name}: Acc {acc_delta:+.2%} | Lat {lat_delta:+.1f}ms")
+                print(f"vs {name}: Acc {acc_delta:+.2%} | Lat {lat_delta:+.4f}s")
 
         # 3. Log & Save
         wandb.log(logs)
@@ -350,6 +351,8 @@ class H2CEngine:
         checkpoint_data = {
             'step': self.global_step,
             'bridge_state_dict': self.bridge.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict(),
             'config': self.config
         }
         
@@ -450,6 +453,15 @@ class H2CEngine:
             self.global_step = checkpoint.get('step', 0)
             loaded_acc = checkpoint.get('accuracy') or checkpoint.get('best_accuracy', 0)
             self.best_accuracy = loaded_acc if loaded_acc else 0.0
+            
+            # Restore optimizer and scheduler states if available
+            if 'optimizer_state_dict' in checkpoint:
+                self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                print(f"Restored optimizer state")
+            if 'scheduler_state_dict' in checkpoint:
+                self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                print(f"Restored scheduler state (LR: {self.optimizer.param_groups[0]['lr']:.2e})")
+            
             print(f"Loaded from step {self.global_step}, accuracy: {self.best_accuracy:.2%}")
             return checkpoint
         else:
