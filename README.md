@@ -61,8 +61,7 @@ from h2c_bridge import ...
 
 1. **Connect VSCode to Colab** ([guide](https://github.com/googlecolab/colab-vscode))
 2. **Open** `notebooks/h2c_bridge_colab.ipynb`
-3. **Update** GitHub URL in first cell
-4. **Run** notebook cells
+3. **Run** notebook cells
 
 Checkpoints save to WandB (no Drive mount needed).
 
