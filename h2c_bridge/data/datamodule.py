@@ -82,10 +82,13 @@ class H2CDataModule:
             collate_fn=self.collator,
         )
 
-        # 7. MMLU EVAL (Validation Split)
-        print(f"--- [DataModule] Setting up MMLU Eval (Validation Split)...")
-        # Use validation split for evaluation with samples_per_subject from config
-        mmlu_eval_dataset = MMLUDataset(split="validation", samples_per_subject=self.samples_per_subject)
+        # 7. MMLU EVAL (Test Split - Full)
+        # Use test split for final evaluation (standard benchmark reporting)
+        # samples_per_subject=None means use ALL samples (~14k total)
+        mmlu_split = self.config.get("mmlu_eval_split", "test")
+        samples_per_subject = self.samples_per_subject if self.samples_per_subject else None
+        print(f"--- [DataModule] Setting up MMLU Eval ({mmlu_split} split, {samples_per_subject or 'ALL'} per subject)...")
+        mmlu_eval_dataset = MMLUDataset(split=mmlu_split, samples_per_subject=samples_per_subject)
 
         eval_batch_size = max(1, self.batch_size // 2)
         self.mmlu_loader = DataLoader(
