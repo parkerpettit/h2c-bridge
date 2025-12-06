@@ -312,7 +312,7 @@ class H2CMMLUEvaluator(H2CBase):
                 # But context in batch['raw_context'] is just the question + choices from MMLUDataset
                 # Let's just use the full context as the "question" for now to be safe
                 
-                s_prompt = f"Give a hint that will help solve the answer for the following question: {clean_ctx} Do NOT under any circumstances say what the answer is. Be concise."
+                s_prompt = f"In one clear sentence, describe the most essential background knowledge needed to answer the question: {clean_ctx} Do NOT directly solve or give answer to the question."
                 sharer_inputs_formatted.append([{"role": "user", "content": s_prompt}])
 
             s_encoded = self.tok_sharer.apply_chat_template(
@@ -344,26 +344,15 @@ class H2CMMLUEvaluator(H2CBase):
                 skip_special_tokens=True
             )
 
-            # 3. Receiver Step (Context + Hint + Instruction)
+            # 3. Receiver Step (Context + Hint)
             receiver_inputs_formatted = []
-            for ctx, hint, instr in zip(raw_contexts, s_hints, raw_instructions):
+            for ctx, hint in zip(raw_contexts, s_hints):
                 # Clean the hint to prevent formatting issues
                 clean_hint = hint.replace("\n", " ").strip()
 
-                # Construct the final prompt
-                # We need to reconstruct the full prompt with the hint injected BEFORE instructions
-                # raw_context contains "Question: ... \n Choices: ..."
-                # raw_instruction contains "\nInstructions: ..." (from our new dataset code)
-                
-                # If raw_instruction is empty (e.g. not split correctly), we fallback
-                if not instr:
-                     instr = (
-                        "Carefully read the question and all options.\n"
-                        "Respond with only the letter of the correct answer (A, B, C, or D)."
-                    )
-
-                # Inject hint - instruction first, then context with hint
-                final_content = f"{instr}\n{ctx}\n[Hint: {clean_hint}]"
+                # raw_context already contains instructions + question + choices
+                # Just append the hint
+                final_content = f"{ctx}\n[Hint: {clean_hint}]"
                 receiver_inputs_formatted.append([{"role": "user", "content": final_content}])
 
             r_encoded = self.tok_receiver.apply_chat_template(
