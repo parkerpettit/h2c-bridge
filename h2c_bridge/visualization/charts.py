@@ -39,7 +39,7 @@ def log_performance_charts(engine, config, eval_cache=None, baseline_results=Non
     # --- Data Preparation ---
     data = []
 
-    # Prefer freshly calculated baseline_results over config["BASELINES"]
+    # Prefer freshly calculated baseline_results - compute if not provided
     if baseline_results:
         for name, metrics in baseline_results.items():
             clean_name = name.replace("_", " ").title()
@@ -51,8 +51,10 @@ def log_performance_charts(engine, config, eval_cache=None, baseline_results=Non
                 "Type": "baseline"
             })
     else:
-        # Fallback to config baselines
-        for name, metrics in config.get("BASELINES", {}).items():
+        # Compute baselines fresh (don't use precomputed config values)
+        print("[Viz] Computing baselines fresh...")
+        fresh_baselines = engine.mmlu_evaluator.evaluate_baselines(engine.mmlu_loader)
+        for name, metrics in fresh_baselines.items():
             clean_name = name.replace("_", " ").title()
             lat = metrics.get("latency_s", 0)
             data.append({
@@ -702,12 +704,16 @@ def log_training_summary(engine, config, eval_cache=None, baseline_results=None)
     else:
         h2c_acc, h2c_err, h2c_lat = engine.mmlu_evaluator.evaluate_accuracy(engine.mmlu_loader)
 
-    # Prefer freshly calculated baseline_results over config["BASELINES"]
+    # Prefer freshly calculated baseline_results - compute if not provided
     if baseline_results:
         baselines = {name: {"acc": v["acc"], "latency_s": v["latency_s"]}
                      for name, v in baseline_results.items()}
     else:
-        baselines = config.get("BASELINES", {})
+        # Compute baselines fresh (don't use precomputed config values)
+        print("[Viz] Computing baselines fresh for summary...")
+        fresh_baselines = engine.mmlu_evaluator.evaluate_baselines(engine.mmlu_loader)
+        baselines = {name: {"acc": v["acc"], "latency_s": v["latency_s"]}
+                     for name, v in fresh_baselines.items()}
 
     # Create figure with subplots - increased spacing to prevent overlap
     fig = plt.figure(figsize=(16, 9))

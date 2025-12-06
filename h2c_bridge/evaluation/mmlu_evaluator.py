@@ -268,22 +268,26 @@ class H2CMMLUEvaluator(H2CBase):
             full_input = torch.cat([rec_full_ids, rec_kickstart], dim=1)
             full_mask = torch.cat([rec_mask, torch.ones_like(rec_kickstart)], dim=1)
 
-            outputs = self.receiver.generate(
-                input_ids=full_input, attention_mask=full_mask,
-                max_new_tokens=max_new_tokens, pad_token_id=self.tok_receiver.pad_token_id,
-                eos_token_id=self.tok_receiver.eos_token_id, do_sample=False
-            )
+            # Use autocast to match bridge mode precision for fair latency comparison
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                outputs = self.receiver.generate(
+                    input_ids=full_input, attention_mask=full_mask,
+                    max_new_tokens=max_new_tokens, pad_token_id=self.tok_receiver.pad_token_id,
+                    eos_token_id=self.tok_receiver.eos_token_id, do_sample=False
+                )
             prompt_texts = self.tok_receiver.batch_decode(full_input, skip_special_tokens=False)
             gen_texts = self.tok_receiver.batch_decode(outputs[:, full_input.shape[1]:], skip_special_tokens=False)
             del outputs, full_input, full_mask
 
         elif mode == "sharer_only":
             # Sharer input is already full (padded) in the batch
-            outputs = self.sharer.generate(
-                input_ids=sharer_ids, attention_mask=sharer_mask,
-                max_new_tokens=max_new_tokens, pad_token_id=self.tok_sharer.pad_token_id,
-                eos_token_id=self.tok_sharer.eos_token_id, do_sample=False
-            )
+            # Use autocast to match bridge mode precision for fair latency comparison
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                outputs = self.sharer.generate(
+                    input_ids=sharer_ids, attention_mask=sharer_mask,
+                    max_new_tokens=max_new_tokens, pad_token_id=self.tok_sharer.pad_token_id,
+                    eos_token_id=self.tok_sharer.eos_token_id, do_sample=False
+                )
             prompt_texts = self.tok_sharer.batch_decode(sharer_ids, skip_special_tokens=False)
             gen_texts = self.tok_sharer.batch_decode(outputs[:, sharer_ids.shape[1]:], skip_special_tokens=False)
             del outputs
@@ -322,14 +326,16 @@ class H2CMMLUEvaluator(H2CBase):
             s_inputs = s_encoded["input_ids"].to(self.device)
             s_attn_mask = s_encoded["attention_mask"].to(self.device)
 
-            s_out = self.sharer.generate(
-                s_inputs,
-                attention_mask=s_attn_mask,
-                max_new_tokens=max_new_tokens,  # Use same as other baselines for fair comparison
-                pad_token_id=self.tok_sharer.pad_token_id,
-                eos_token_id=self.tok_sharer.eos_token_id,
-                do_sample=False
-            )
+            # Use autocast to match bridge mode precision for fair latency comparison
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                s_out = self.sharer.generate(
+                    s_inputs,
+                    attention_mask=s_attn_mask,
+                    max_new_tokens=max_new_tokens,  # Use same as other baselines for fair comparison
+                    pad_token_id=self.tok_sharer.pad_token_id,
+                    eos_token_id=self.tok_sharer.eos_token_id,
+                    do_sample=False
+                )
 
             # Decode only the new tokens (the hint)
             # Use skip_special_tokens=True to avoid leaking <|eot_id|> etc. into Receiver prompt
@@ -371,14 +377,16 @@ class H2CMMLUEvaluator(H2CBase):
             r_inputs = r_encoded["input_ids"].to(self.device)
             r_attn_mask = r_encoded["attention_mask"].to(self.device)
 
-            r_out = self.receiver.generate(
-                r_inputs,
-                attention_mask=r_attn_mask,
-                max_new_tokens=max_new_tokens,
-                pad_token_id=self.tok_receiver.pad_token_id,
-                eos_token_id=self.tok_receiver.eos_token_id,
-                do_sample=False
-            )
+            # Use autocast to match bridge mode precision for fair latency comparison
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                r_out = self.receiver.generate(
+                    r_inputs,
+                    attention_mask=r_attn_mask,
+                    max_new_tokens=max_new_tokens,
+                    pad_token_id=self.tok_receiver.pad_token_id,
+                    eos_token_id=self.tok_receiver.eos_token_id,
+                    do_sample=False
+                )
 
             # Store prompts for logging (we use the raw text version for readability)
             prompt_texts = [m[0]['content'] for m in receiver_inputs_formatted]
