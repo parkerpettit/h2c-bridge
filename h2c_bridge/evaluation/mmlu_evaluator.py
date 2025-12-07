@@ -157,9 +157,11 @@ class H2CMMLUEvaluator(H2CBase):
 
         for batch_idx, batch in enumerate(progress_bar):
             try:
-                # 1. Measure Generation Time
+                # 1. Measure Generation Time (with CUDA sync for accurate timing)
+                torch.cuda.synchronize()  # Ensure previous ops complete
                 start_time = time.time()
                 prompt_texts, gen_texts, labels = self._generate_batch(batch, mode, max_new_tokens)
+                torch.cuda.synchronize()  # Ensure all GPU ops complete before timing
                 end_time = time.time()
 
                 # Get subjects if available (for detailed analysis)
@@ -302,16 +304,7 @@ class H2CMMLUEvaluator(H2CBase):
             # 2. Sharer Step (Generate Hint)
             sharer_inputs_formatted = []
             for ctx in raw_contexts:
-                # Extract just the question part if possible, otherwise use full context
-                # Context usually starts with "Question: " and ends with choices
-                # We want: "In one clear sentence, describe the most essential background knowledge needed to answer the question: {question} Do NOT directly solve or give answer to the question."
-                
-                # Simple heuristic: remove "Question: " prefix if present
                 clean_ctx = ctx.replace("Question: ", "").strip()
-                # Remove choices if possible (they start with A) ...)
-                # But context in batch['raw_context'] is just the question + choices from MMLUDataset
-                # Let's just use the full context as the "question" for now to be safe
-                
                 s_prompt = f"In one clear sentence, describe the most essential background knowledge needed to answer the question: {clean_ctx} Do NOT directly solve or give answer to the question."
                 sharer_inputs_formatted.append([{"role": "user", "content": s_prompt}])
 
