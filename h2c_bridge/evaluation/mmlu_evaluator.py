@@ -32,6 +32,18 @@ class H2CMMLUEvaluator(H2CBase):
         super().__init__(sharer, receiver, bridge, config, device)
         self.tok_receiver = tok_receiver
         self.tok_sharer = tok_sharer
+        
+        # Cache answer token IDs for logprob-based evaluation
+        # Use " A", " B", etc. to match the expected format after generation prompt
+        self.answer_tokens_receiver = ["A", "B", "C", "D"]
+        self.answer_ids_receiver = [
+            tok_receiver.encode(" " + a, add_special_tokens=False)[-1] 
+            for a in self.answer_tokens_receiver
+        ]
+        self.answer_ids_sharer = [
+            tok_sharer.encode(" " + a, add_special_tokens=False)[-1] 
+            for a in self.answer_tokens_receiver
+        ]
 
     @torch.no_grad()
     def evaluate_baselines(self, dataloader, max_new_tokens=256, debug_mode=False):
@@ -200,8 +212,11 @@ class H2CMMLUEvaluator(H2CBase):
         error_rate = stats["format_errors"] / total
         avg_latency_s = (stats["total_time"] / total)
         avg_tokens = stats["total_tokens_generated"] / total
+        # Calculate per-token latency (only if we generated tokens)
+        total_tokens = stats["total_tokens_generated"]
+        latency_per_token = stats["total_time"] / total_tokens if total_tokens > 0 else 0
 
-        print(f"[{mode}] Acc: {accuracy:.2%} | Err: {error_rate:.2%} | Latency: {avg_latency_s:.4f}s | Avg tokens: {avg_tokens:.1f}")
+        print(f"[{mode}] Acc: {accuracy:.2%} | Err: {error_rate:.2%} | Latency: {avg_latency_s:.4f}s | Avg tokens: {avg_tokens:.1f} | Per-token: {latency_per_token:.4f}s")
 
         # Log examples to WandB
         if wandb_examples and len(wandb_examples) > 0:
@@ -221,93 +236,95 @@ class H2CMMLUEvaluator(H2CBase):
         return accuracy, error_rate, avg_latency_s
 
     def _generate_batch(self, batch, mode, max_new_tokens):
-        """Generate outputs for a batch using the specified mode.
+        """Score a batch using logprob-based evaluation (single forward pass).
+        
+        Instead of generating tokens, we do a single forward pass and check
+        which answer token (A, B, C, D) has the highest probability.
+        This ensures fair latency comparison across all modes.
         
         Args:
             batch: Batch from dataloader
-            mode: Generation mode
-            max_new_tokens: Maximum tokens to generate
+            mode: Evaluation mode
+            max_new_tokens: Unused (kept for API compatibility)
             
         Returns:
-            Tuple of (prompt_texts, gen_texts, labels, tokens_generated)
+            Tuple of (prompt_texts, predictions, labels, tokens_generated)
+            predictions is a list of predicted answer letters (A/B/C/D)
         """
+        import torch.nn.functional as F
+        
         # Standard Tensors
         sharer_ids = batch['sharer_input_ids'].to(self.device)
         sharer_mask = batch['sharer_mask'].to(self.device)
-        tokens_generated = 0
-        rec_full_ids = batch['receiver_prompt_ids'].to(self.device)  # N-1 tokens
+        rec_full_ids = batch['receiver_prompt_ids'].to(self.device)
         rec_mask = batch['receiver_prompt_mask'].to(self.device)
-        rec_kickstart = batch['receiver_kickstart_ids'].to(self.device)  # 1 token
+        rec_kickstart = batch['receiver_kickstart_ids'].to(self.device)
+        batch_size = sharer_ids.shape[0]
 
         prompt_texts = []
-        gen_texts = []
+        predictions = []  # Changed from gen_texts - now stores predicted answers
 
         if mode == "bridge":
-            # Bridge Logic (Standard) - use autocast to match training dtype
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                # Build cache from receiver_prompt_ids (N-1 tokens) - matches training
+                # Build cache from receiver_prompt_ids (N-1 tokens)
                 modified_cache = self.get_bridged_cache(sharer_ids, sharer_mask, rec_full_ids, rec_mask)
 
-                # For generate(), pass N tokens (prompt + kickstart) so there's 1 new token to process
-                # This avoids empty cache_position edge case in HuggingFace
+                # Full input for forward pass
                 full_input_ids = torch.cat([rec_full_ids, rec_kickstart], dim=1)
                 full_mask = torch.cat([rec_mask, torch.ones_like(rec_kickstart)], dim=1)
 
-                outputs = self.receiver.generate(
-                    input_ids=full_input_ids,  # N tokens (cache has N-1)
+                # Single forward pass to get logits
+                outputs = self.receiver(
+                    input_ids=full_input_ids,
                     past_key_values=modified_cache,
-                    attention_mask=full_mask,
-                    max_new_tokens=max_new_tokens,
-                    pad_token_id=self.tok_receiver.pad_token_id,
-                    eos_token_id=self.tok_receiver.eos_token_id,
-                    do_sample=False
+                    attention_mask=full_mask
                 )
-                tokens_generated = outputs.shape[1] - full_input_ids.shape[1]
                 del modified_cache
+                
+            # Get logits for last position, extract answer token probs
+            logits = outputs.logits[:, -1, :]  # [batch_size, vocab_size]
+            answer_logits = logits[:, self.answer_ids_receiver]  # [batch_size, 4]
+            pred_indices = answer_logits.argmax(dim=-1)  # [batch_size]
+            predictions = [self.answer_tokens_receiver[idx] for idx in pred_indices.tolist()]
             prompt_texts = self.tok_receiver.batch_decode(full_input_ids, skip_special_tokens=False)
-            gen_texts = self.tok_receiver.batch_decode(outputs[:, full_input_ids.shape[1]:], skip_special_tokens=False)
             del outputs
 
         elif mode == "receiver_only":
-            # Reconstruct full input (Prompt + Kickstart)
-            rec_kickstart = batch['receiver_kickstart_ids'].to(self.device)
             full_input = torch.cat([rec_full_ids, rec_kickstart], dim=1)
             full_mask = torch.cat([rec_mask, torch.ones_like(rec_kickstart)], dim=1)
 
-            # Use autocast to match bridge mode precision for fair latency comparison
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                outputs = self.receiver.generate(
-                    input_ids=full_input, attention_mask=full_mask,
-                    max_new_tokens=max_new_tokens, pad_token_id=self.tok_receiver.pad_token_id,
-                    eos_token_id=self.tok_receiver.eos_token_id, do_sample=False
+                outputs = self.receiver(
+                    input_ids=full_input,
+                    attention_mask=full_mask
                 )
-            tokens_generated = outputs.shape[1] - full_input.shape[1]
+            
+            logits = outputs.logits[:, -1, :]
+            answer_logits = logits[:, self.answer_ids_receiver]
+            pred_indices = answer_logits.argmax(dim=-1)
+            predictions = [self.answer_tokens_receiver[idx] for idx in pred_indices.tolist()]
             prompt_texts = self.tok_receiver.batch_decode(full_input, skip_special_tokens=False)
-            gen_texts = self.tok_receiver.batch_decode(outputs[:, full_input.shape[1]:], skip_special_tokens=False)
             del outputs, full_input, full_mask
 
         elif mode == "sharer_only":
-            # Sharer input is already full (padded) in the batch
-            # Use autocast to match bridge mode precision for fair latency comparison
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                outputs = self.sharer.generate(
-                    input_ids=sharer_ids, attention_mask=sharer_mask,
-                    max_new_tokens=max_new_tokens, pad_token_id=self.tok_sharer.pad_token_id,
-                    eos_token_id=self.tok_sharer.eos_token_id, do_sample=False
+                outputs = self.sharer(
+                    input_ids=sharer_ids,
+                    attention_mask=sharer_mask
                 )
-            tokens_generated = outputs.shape[1] - sharer_ids.shape[1]
+            
+            logits = outputs.logits[:, -1, :]
+            answer_logits = logits[:, self.answer_ids_sharer]
+            pred_indices = answer_logits.argmax(dim=-1)
+            predictions = [self.answer_tokens_receiver[idx] for idx in pred_indices.tolist()]
             prompt_texts = self.tok_sharer.batch_decode(sharer_ids, skip_special_tokens=False)
-            gen_texts = self.tok_sharer.batch_decode(outputs[:, sharer_ids.shape[1]:], skip_special_tokens=False)
             del outputs
 
         elif mode == "text_to_text":
-            # Text-to-text knowledge transfer: Sharer generates hint, Receiver uses it
-            
-            # 1. Get Raw Components
+            # Text-to-text still needs generation for the hint, but we score with logprobs
             raw_contexts = batch['raw_context']
-            raw_instructions = batch['raw_instruction']
 
-            # 2. Sharer Step (Generate Hint)
+            # 1. Sharer generates hint
             sharer_inputs_formatted = []
             for ctx in raw_contexts:
                 clean_ctx = ctx.replace("Question: ", "").strip()
@@ -325,32 +342,25 @@ class H2CMMLUEvaluator(H2CBase):
             s_inputs = s_encoded["input_ids"].to(self.device)
             s_attn_mask = s_encoded["attention_mask"].to(self.device)
 
-            # Use autocast to match bridge mode precision for fair latency comparison
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 s_out = self.sharer.generate(
                     s_inputs,
                     attention_mask=s_attn_mask,
-                    max_new_tokens=max_new_tokens,  # Use same as other baselines for fair comparison
+                    max_new_tokens=max_new_tokens,
                     pad_token_id=self.tok_sharer.pad_token_id,
                     eos_token_id=self.tok_sharer.eos_token_id,
                     do_sample=False
                 )
 
-            # Decode only the new tokens (the hint)
-            # Use skip_special_tokens=True to avoid leaking <|eot_id|> etc. into Receiver prompt
             s_hints = self.tok_sharer.batch_decode(
                 s_out[:, s_inputs.shape[1]:],
                 skip_special_tokens=True
             )
 
-            # 3. Receiver Step (Context + Hint)
+            # 2. Receiver scores with logprobs (using hint)
             receiver_inputs_formatted = []
             for ctx, hint in zip(raw_contexts, s_hints):
-                # Clean the hint to prevent formatting issues
                 clean_hint = hint.replace("\n", " ").strip()
-
-                # raw_context already contains instructions + question + choices
-                # Just append the hint
                 final_content = f"{ctx}\n[Hint: {clean_hint}]"
                 receiver_inputs_formatted.append([{"role": "user", "content": final_content}])
 
@@ -365,38 +375,32 @@ class H2CMMLUEvaluator(H2CBase):
             r_inputs = r_encoded["input_ids"].to(self.device)
             r_attn_mask = r_encoded["attention_mask"].to(self.device)
 
-            # Use autocast to match bridge mode precision for fair latency comparison
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                r_out = self.receiver.generate(
-                    r_inputs,
-                    attention_mask=r_attn_mask,
-                    max_new_tokens=max_new_tokens,
-                    pad_token_id=self.tok_receiver.pad_token_id,
-                    eos_token_id=self.tok_receiver.eos_token_id,
-                    do_sample=False
+                outputs = self.receiver(
+                    input_ids=r_inputs,
+                    attention_mask=r_attn_mask
                 )
 
-            # Store prompts for logging (we use the raw text version for readability)
+            logits = outputs.logits[:, -1, :]
+            answer_logits = logits[:, self.answer_ids_receiver]
+            pred_indices = answer_logits.argmax(dim=-1)
+            predictions = [self.answer_tokens_receiver[idx] for idx in pred_indices.tolist()]
             prompt_texts = [m[0]['content'] for m in receiver_inputs_formatted]
-            tokens_generated = r_out.shape[1] - r_inputs.shape[1]
-            gen_texts = self.tok_receiver.batch_decode(
-                r_out[:, r_inputs.shape[1]:],
-                skip_special_tokens=False
-            )
-            # Cleanup T2T tensors
-            del s_inputs, s_attn_mask, s_out, r_inputs, r_attn_mask, r_out
+            del s_inputs, s_attn_mask, s_out, r_inputs, r_attn_mask, outputs
 
-        # Cleanup - tensors created at function start
+        # Cleanup
         del sharer_ids, sharer_mask, rec_full_ids, rec_mask
 
-        return prompt_texts, gen_texts, batch['labels'], tokens_generated
+        # tokens_generated is always 0 for logprob-based eval (we don't generate)
+        # We return predictions as gen_texts for compatibility with _score_batch
+        return prompt_texts, predictions, batch['labels'], 0
 
     def _score_batch(self, prompt_texts, gen_texts, labels, stats, subjects=None, collect_details=False, wandb_examples=None, wandb_max=10, mode="unknown"):
         """Scores the batch and collects examples for WandB if enabled.
         
         Args:
             prompt_texts: List of prompts
-            gen_texts: List of generated texts
+            gen_texts: List of predicted answers (A/B/C/D from logprobs) or generated texts
             labels: List of correct labels
             stats: Dictionary of statistics to update
             subjects: List of subjects (optional)
@@ -413,18 +417,13 @@ class H2CMMLUEvaluator(H2CBase):
 
         batch_details = [] if collect_details else None
 
-        for prompt, gen_text, truth, subject in zip(prompt_texts, gen_texts, labels, subjects):
-            pred = self._extract_json_answer(gen_text)
-
-            is_correct = False
-            is_invalid = False
-
-            if pred == "INVALID":
-                stats["format_errors"] += 1
-                is_invalid = True
-            elif pred == truth:
+        for prompt, pred, truth, subject in zip(prompt_texts, gen_texts, labels, subjects):
+            # With logprob-based eval, predictions are always valid (A/B/C/D)
+            # No INVALID cases possible since we always pick the highest probability answer
+            
+            is_correct = (pred == truth)
+            if is_correct:
                 stats["correct"] += 1
-                is_correct = True
 
             stats["total"] += 1
 
@@ -434,17 +433,12 @@ class H2CMMLUEvaluator(H2CBase):
                     "pred": pred,
                     "label": truth,
                     "subject": subject,
-                    "correct": is_correct,
-                    "invalid": is_invalid
+                    "correct": is_correct
                 })
 
             # Collect examples for WandB logging (limit to wandb_max)
             if wandb_examples is not None and len(wandb_examples) < wandb_max:
-                # Determine status
-                if is_invalid:
-                    status = "format_error"
-                    correct_symbol = "⚠️"
-                elif is_correct:
+                if is_correct:
                     status = "correct"
                     correct_symbol = "✓"
                 else:
@@ -457,7 +451,7 @@ class H2CMMLUEvaluator(H2CBase):
                     mode,  # mode
                     subject,  # subject
                     prompt_preview,  # prompt_preview
-                    gen_text.strip(),  # response
+                    pred,  # response (predicted letter)
                     pred,  # prediction
                     truth,  # label
                     correct_symbol,  # correct
