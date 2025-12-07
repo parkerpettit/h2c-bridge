@@ -145,7 +145,7 @@ class H2CMMLUEvaluator(H2CBase):
         Returns:
             Tuple of (accuracy, error_rate, latency_s) or (accuracy, error_rate, latency_s, detailed_results) if collect_details=True
         """
-        stats = {"correct": 0, "total": 0, "format_errors": 0, "total_time": 0.0}
+        stats = {"correct": 0, "total": 0, "format_errors": 0, "total_time": 0.0, "total_tokens_generated": 0}
         detailed_results = [] if collect_details else None
         
         # WandB example logging
@@ -160,15 +160,16 @@ class H2CMMLUEvaluator(H2CBase):
                 # 1. Measure Generation Time (with CUDA sync for accurate timing)
                 torch.cuda.synchronize()  # Ensure previous ops complete
                 start_time = time.time()
-                prompt_texts, gen_texts, labels = self._generate_batch(batch, mode, max_new_tokens)
+                prompt_texts, gen_texts, labels, tokens_generated = self._generate_batch(batch, mode, max_new_tokens)
                 torch.cuda.synchronize()  # Ensure all GPU ops complete before timing
                 end_time = time.time()
 
                 # Get subjects if available (for detailed analysis)
                 subjects = batch.get('subjects', ['unknown'] * len(labels))
 
-                # Update Time Stats
+                # Update Stats
                 stats["total_time"] += (end_time - start_time)
+                stats["total_tokens_generated"] += tokens_generated
 
                 # 2. Score & Log
                 batch_details = self._score_batch(
@@ -198,8 +199,9 @@ class H2CMMLUEvaluator(H2CBase):
         accuracy = stats["correct"] / total
         error_rate = stats["format_errors"] / total
         avg_latency_s = (stats["total_time"] / total)
+        avg_tokens = stats["total_tokens_generated"] / total
 
-        print(f"[{mode}] Acc: {accuracy:.2%} | Err: {error_rate:.2%} | Latency: {avg_latency_s:.4f}s")
+        print(f"[{mode}] Acc: {accuracy:.2%} | Err: {error_rate:.2%} | Latency: {avg_latency_s:.4f}s | Avg tokens: {avg_tokens:.1f}")
 
         # Log examples to WandB
         if wandb_examples and len(wandb_examples) > 0:
@@ -227,11 +229,12 @@ class H2CMMLUEvaluator(H2CBase):
             max_new_tokens: Maximum tokens to generate
             
         Returns:
-            Tuple of (prompt_texts, gen_texts, labels)
+            Tuple of (prompt_texts, gen_texts, labels, tokens_generated)
         """
         # Standard Tensors
         sharer_ids = batch['sharer_input_ids'].to(self.device)
         sharer_mask = batch['sharer_mask'].to(self.device)
+        tokens_generated = 0
         rec_full_ids = batch['receiver_prompt_ids'].to(self.device)  # N-1 tokens
         rec_mask = batch['receiver_prompt_mask'].to(self.device)
         rec_kickstart = batch['receiver_kickstart_ids'].to(self.device)  # 1 token
@@ -259,6 +262,7 @@ class H2CMMLUEvaluator(H2CBase):
                     eos_token_id=self.tok_receiver.eos_token_id,
                     do_sample=False
                 )
+                tokens_generated = outputs.shape[1] - full_input_ids.shape[1]
                 del modified_cache
             prompt_texts = self.tok_receiver.batch_decode(full_input_ids, skip_special_tokens=False)
             gen_texts = self.tok_receiver.batch_decode(outputs[:, full_input_ids.shape[1]:], skip_special_tokens=False)
@@ -277,6 +281,7 @@ class H2CMMLUEvaluator(H2CBase):
                     max_new_tokens=max_new_tokens, pad_token_id=self.tok_receiver.pad_token_id,
                     eos_token_id=self.tok_receiver.eos_token_id, do_sample=False
                 )
+            tokens_generated = outputs.shape[1] - full_input.shape[1]
             prompt_texts = self.tok_receiver.batch_decode(full_input, skip_special_tokens=False)
             gen_texts = self.tok_receiver.batch_decode(outputs[:, full_input.shape[1]:], skip_special_tokens=False)
             del outputs, full_input, full_mask
@@ -290,6 +295,7 @@ class H2CMMLUEvaluator(H2CBase):
                     max_new_tokens=max_new_tokens, pad_token_id=self.tok_sharer.pad_token_id,
                     eos_token_id=self.tok_sharer.eos_token_id, do_sample=False
                 )
+            tokens_generated = outputs.shape[1] - sharer_ids.shape[1]
             prompt_texts = self.tok_sharer.batch_decode(sharer_ids, skip_special_tokens=False)
             gen_texts = self.tok_sharer.batch_decode(outputs[:, sharer_ids.shape[1]:], skip_special_tokens=False)
             del outputs
@@ -372,6 +378,7 @@ class H2CMMLUEvaluator(H2CBase):
 
             # Store prompts for logging (we use the raw text version for readability)
             prompt_texts = [m[0]['content'] for m in receiver_inputs_formatted]
+            tokens_generated = r_out.shape[1] - r_inputs.shape[1]
             gen_texts = self.tok_receiver.batch_decode(
                 r_out[:, r_inputs.shape[1]:],
                 skip_special_tokens=False
@@ -382,7 +389,7 @@ class H2CMMLUEvaluator(H2CBase):
         # Cleanup - tensors created at function start
         del sharer_ids, sharer_mask, rec_full_ids, rec_mask
 
-        return prompt_texts, gen_texts, batch['labels']
+        return prompt_texts, gen_texts, batch['labels'], tokens_generated
 
     def _score_batch(self, prompt_texts, gen_texts, labels, stats, subjects=None, collect_details=False, wandb_examples=None, wandb_max=10, mode="unknown"):
         """Scores the batch and collects examples for WandB if enabled.
