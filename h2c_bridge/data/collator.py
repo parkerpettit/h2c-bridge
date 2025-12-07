@@ -59,6 +59,7 @@ class H2CDataCollator:
 
         # Lists for padding later
         sharer_ids_list = []
+        sharer_kickstart_list = []  # The extracted last token for sharer
         rec_prompt_ids_list = []  # The prompt MINUS the last token
         rec_kickstart_list = []   # The extracted last token
         rec_target_ids_list = []
@@ -68,6 +69,7 @@ class H2CDataCollator:
             s_raw = self._get_ids(self.tok_sharer, p, add_gen=True)
             s_raw = s_raw[:self.max_len]  # Truncate to max_len
             sharer_ids_list.append(s_raw[:-1])  # Strip last
+            sharer_kickstart_list.append([s_raw[-1]])  # Keep last (The 'Kickstart')
 
             # 2. Receiver: Tokenize & Strip Last & Truncate
             r_raw = self._get_ids(self.tok_receiver, p, add_gen=True)
@@ -96,6 +98,9 @@ class H2CDataCollator:
         # 3. Receiver Kickstart (It's just 1 token, but we tensor-ize it)
         rec_kickstart_batch = torch.tensor(rec_kickstart_list)
 
+        # 4. Sharer Kickstart
+        sharer_kickstart_batch = torch.tensor(sharer_kickstart_list)
+
         # 4. Receiver Targets
         rec_target_batch = self.tok_receiver.pad(
             {"input_ids": rec_target_ids_list}, padding=True, return_tensors="pt"
@@ -122,6 +127,7 @@ class H2CDataCollator:
         return {
             "sharer_input_ids": sharer_batch['input_ids'],
             "sharer_mask": sharer_batch['attention_mask'],
+            "sharer_kickstart_ids": sharer_kickstart_batch,              # The kickstart token for sharer
 
             "receiver_prompt_ids": rec_prompt_batch['input_ids'],      # The prefill input
             "receiver_prompt_mask": rec_prompt_batch['attention_mask'], # Mask for prefill

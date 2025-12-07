@@ -307,18 +307,23 @@ class H2CMMLUEvaluator(H2CBase):
             del outputs, full_input, full_mask
 
         elif mode == "sharer_only":
+            # Add kickstart token to get full input (same pattern as receiver)
+            sharer_kickstart = batch['sharer_kickstart_ids'].to(self.device)
+            full_input = torch.cat([sharer_ids, sharer_kickstart], dim=1)
+            full_mask = torch.cat([sharer_mask, torch.ones_like(sharer_kickstart)], dim=1)
+            
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 outputs = self.sharer(
-                    input_ids=sharer_ids,
-                    attention_mask=sharer_mask
+                    input_ids=full_input,
+                    attention_mask=full_mask
                 )
             
             logits = outputs.logits[:, -1, :]
             answer_logits = logits[:, self.answer_ids_sharer]
             pred_indices = answer_logits.argmax(dim=-1)
             predictions = [self.answer_tokens_receiver[idx] for idx in pred_indices.tolist()]
-            prompt_texts = self.tok_sharer.batch_decode(sharer_ids, skip_special_tokens=False)
-            del outputs
+            prompt_texts = self.tok_sharer.batch_decode(full_input, skip_special_tokens=False)
+            del outputs, full_input, full_mask
 
         elif mode == "text_to_text":
             # Text-to-text still needs generation for the hint, but we score with logprobs
