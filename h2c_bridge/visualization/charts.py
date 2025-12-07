@@ -142,7 +142,7 @@ def log_performance_charts(engine, config, eval_cache=None, baseline_results=Non
 
     ax.set_xlabel("Latency (seconds) - lower is better", labelpad=10)
     ax.set_ylabel("Accuracy - higher is better", labelpad=10)
-    ax.legend(loc='lower right', framealpha=0.9)
+    ax.legend(loc='upper right', framealpha=0.9)
 
     plt.tight_layout()
     wandb.log({"Evaluation/Performance_Scatter": wandb.Image(fig1)})
