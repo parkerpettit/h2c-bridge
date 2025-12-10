@@ -151,6 +151,3 @@ Generates:
 }
 ```
 
-## License
-
-MIT
