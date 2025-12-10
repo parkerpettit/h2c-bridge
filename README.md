@@ -1,26 +1,43 @@
 # H2C Bridge
 
-Transfer knowledge from a large LLM (sharer) to a small LLM (receiver) by injecting modified key-value cache representations.
+**Hidden-to-Cache (H2C)** enables cross-architecture latent communication between LLMs by translating a large model's hidden states into KV-cache modifications for a smaller model.
 
-## Setup
 
-### Prerequisites
+## Overview
 
-- Python 3.8+
-- CUDA-capable GPU
-- WandB account
+Multi-agent LLM systems typically communicate via natural language, which is both information-limited (lossy compression) and slow (autoregressive decoding). H2C bypasses this bottleneck by:
 
-### Installation
+1. Extracting layer-wise hidden states from a **Sharer** model (Llama-3.1-8B)
+2. Translating them via a trainable **Bridge** (dual cross-attention + FFN)
+3. Injecting the result into the **Receiver**'s KV-cache (Qwen2.5-0.5B)
+
+The Receiver then generates responses informed by the Sharer's representations—without the Sharer ever producing tokens.
+
+## Key Results
+
+| Method | MMLU Accuracy | Latency |
+|--------|---------------|---------|
+| H2C Bridge (Ours) | **45.2%** | ~0.09s |
+| Receiver Only (0.5B) | 34.8% | ~0.03s |
+| Text-to-Text | 33.8% | ~0.86s |
+| Sharer Only (8B) | 60.2% | ~0.09s |
+
+- **+10.4 pp** improvement over Receiver-only
+- **10x faster** than Text-to-Text collaboration
+- Generalizes across all 57 MMLU subject categories
+
+## Installation
 
 ```bash
-# Clone repository
 git clone https://github.com/parkerpettit/h2c-bridge.git
 cd h2c-bridge
-
-# Install package
 pip install -e .
 ```
 
+**Requirements:**
+- Python 3.8+
+- CUDA-capable GPU (A100 recommended)
+- ~24GB VRAM (with 4-bit quantization)
 
 ## Quick Start
 
@@ -43,31 +60,72 @@ engine.run(epochs=1)
 
 Checkpoints automatically upload to WandB as versioned artifacts.
 
-## Development Workflow
+## Architecture
 
-### Local Iteration
-
-Edit code locally, changes auto-reload:
-
-```bash
-python -m ipython
-%load_ext autoreload
-%autoreload 2
-
-from h2c_bridge import ...
+```
+┌─────────────────┐     ┌─────────────────┐
+│  Llama-3.1-8B   │     │  Qwen2.5-0.5B   │
+│    (Sharer)     │     │   (Receiver)    │
+│                 │     │                 │
+│  Hidden States  │     │    KV-Cache     │
+│   H_l^Sharer    │     │   (K_l, V_l)    │
+└────────┬────────┘     └────────┬────────┘
+         │                       │
+         │    ┌─────────────┐    │
+         └───►│  H2C Bridge │◄───┘
+              │   (~59M)    │
+              │             │
+              │ CrossAttn   │
+              │ + FFN       │
+              │ + Gates     │
+              └──────┬──────┘
+                     │
+                     ▼
+              (K_l^new, V_l^new)
+                     │
+                     ▼
+         Modified Receiver Cache
+                     │
+                     ▼
+              Final Answer
 ```
 
-### Colab Training
+## Training Data
 
-1. **Connect VSCode to Colab** ([guide](https://github.com/googlecolab/colab-vscode))
-2. **Open** `notebooks/h2c_bridge_colab.ipynb`
-3. **Run** notebook cells
+- **80%** OpenHermes-2.5 (instruction-following)
+- **20%** MMLU Auxiliary Train (multiple-choice format)
+- **312,147** examples after filtering to ≤2048 tokens
 
-Checkpoints save to WandB (no Drive mount needed).
+## Project Structure
+
+```
+h2c_bridge/
+├── models/          # Bridge architecture (projector.py, attention.py)
+├── data/            # Dataset & collator
+├── training/        # Trainer & engine
+├── evaluation/      # MMLU evaluator, baselines
+├── visualization/   # Publication-ready charts
+└── config.py        # Default hyperparameters
+
+notebooks/
+├── h2c_bridge_colab.ipynb   # Training notebook used with Google Colab
+```
+
+## Evaluation
+
+```python
+from h2c_bridge.evaluation import H2CMMLUEvaluator
+
+evaluator = H2CMMLUEvaluator(sharer, receiver, bridge, tok_r, tok_s, config)
+
+# Run all baselines
+results = evaluator.evaluate_baselines(mmlu_dataloader)
+
+# Evaluate bridge
+acc, err, latency = evaluator.evaluate_accuracy(mmlu_dataloader)
+```
 
 ## Visualization
-
-Generate publication-ready charts:
 
 ```python
 from h2c_bridge.visualization import run_all_visualizations
@@ -75,36 +133,22 @@ from h2c_bridge.visualization import run_all_visualizations
 run_all_visualizations(engine, config, themes=("dark", "light"))
 ```
 
-Outputs both presentation (dark) and publication (light) versions.
+Generates:
+- Accuracy comparison charts
+- Latency breakdown
+- Gate distribution violin plots
+- Layer-wise injection heatmaps
+- Per-subject accuracy breakdown
 
-## Checkpoints
+## Citation
 
-### Save
-
-Automatic during training. Three types:
-- `latest`: most recent
-- `best`: highest accuracy  
-- `final`: end of training
-
-### Load
-
-```python
-# From WandB artifact
-engine.load_checkpoint("entity/project/model:best")
-
-# Or local file
-engine.load_checkpoint("path/to/checkpoint.pt")
-```
-
-## Project Structure
-
-```
-h2c_bridge/
-├── models/          # Bridge architecture
-├── data/            # Dataset handling
-├── training/        # Training loop
-├── evaluation/      # MMLU benchmarks
-└── visualization/   # Publication charts
+```bibtex
+@misc{h2cbridge,
+  title={Hidden-to-Cache: Latent Communication for Multi-Agent LLM Systems},
+  author={Parker Pettit and Thomas Wu and Aitor Arrese-Igor and Pradesh Mainali},
+  year={2025},
+  note={MIT 6.4610 Final Project}
+}
 ```
 
 ## License
