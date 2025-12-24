@@ -17,13 +17,13 @@ The Receiver then generates responses informed by the Sharer's representationsâ€
 
 | Method | MMLU Accuracy | Latency |
 |--------|---------------|---------|
-| H2C Bridge (Ours) | **45.2%** | ~0.09s |
-| Receiver Only (0.5B) | 34.8% | ~0.03s |
-| Text-to-Text | 33.8% | ~0.86s |
-| Sharer Only (8B) | 60.2% | ~0.09s |
+| H2C Bridge (Ours) | **45.2%** | ~0.16s |
+| Receiver Only (0.5B) | 34.8% | ~0.02s |
+| Text-to-Text | 33.7% | ~1.08s |
+| Sharer Only (8B) | 60.2% | ~0.03s |
 
 - **+10.4 pp** improvement over Receiver-only
-- **10x faster** than Text-to-Text collaboration
+- **7x faster** than Text-to-Text collaboration
 - Generalizes across all 57 MMLU subject categories
 
 ## Installation
@@ -140,17 +140,3 @@ Generates:
 - Layer-wise injection heatmaps
 - Per-subject accuracy breakdown
 
-## Citation
-
-```bibtex
-@misc{h2cbridge,
-  title={Hidden-to-Cache: Latent Communication for Multi-Agent LLM Systems},
-  author={Parker Pettit and Thomas Wu and Aitor Arrese-Igor and Pradesh Mainali},
-  year={2025},
-  note={MIT 6.4610 Final Project}
-}
-```
-
-## License
-
-MIT
